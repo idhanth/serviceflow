@@ -1,29 +1,47 @@
 """Idempotent development seed.
 
-Phase 1 seeds the organization and the three demo logins from PRD 50. Later
-phases extend this with services, employees, customers, vehicles and bookings.
-Running it twice must not duplicate anything.
+Phase 1 seeded the organization and the three demo logins from PRD 50; phase 2
+adds the service catalog, employees, customers and vehicles at the volumes in
+PRD 49. Running it repeatedly must not duplicate anything, so every step is an
+upsert keyed on a natural identifier.
 """
 
 from __future__ import annotations
 
 import logging
+import random
+import string
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from serviceflow.auth.passwords import hash_password
 from serviceflow.core.logging import configure_logging
+from serviceflow.db.models.customer import Customer
+from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import MembershipStatus, Role
 from serviceflow.db.models.membership import OrganizationMembership
 from serviceflow.db.models.organization import Organization
+from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
-from serviceflow.db.session import session_scope
+from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.db.seed_data import (
+    COLORS,
+    CUSTOMER_NOTES,
+    EMPLOYEES,
+    FIRST_NAMES,
+    LAST_NAMES,
+    SERVICES,
+    VEHICLE_MODELS,
+)
 
 logger = logging.getLogger(__name__)
 
 DEMO_ORG_SLUG = "gleam-auto-detailing"
 DEMO_PASSWORD = "demo1234"
+CUSTOMER_COUNT = 75
+VEHICLE_COUNT = 100
+SEED = 20260829  # fixed so reseeding a fresh database reproduces the same demo
 
 DEMO_USERS: list[tuple[str, str, str, Role]] = [
     ("admin@serviceflow.demo", "Alex", "Rivera", Role.ADMIN),
@@ -49,7 +67,15 @@ def upsert_organization(db: Session) -> Organization:
     return org
 
 
-def upsert_user(db: Session, email: str, first: str, last: str) -> User:
+def upsert_user(
+    db: Session,
+    email: str,
+    first: str,
+    last: str,
+    *,
+    phone: str | None = None,
+    with_password: bool = False,
+) -> User:
     user = db.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(
@@ -57,11 +83,11 @@ def upsert_user(db: Session, email: str, first: str, last: str) -> User:
             email=email,
             first_name=first,
             last_name=last,
-            password_hash=hash_password(DEMO_PASSWORD),
+            phone=phone,
+            password_hash=hash_password(DEMO_PASSWORD) if with_password else None,
         )
         db.add(user)
         db.flush()
-        logger.info("seeded user", extra={"email": email})
     return user
 
 
@@ -82,22 +108,194 @@ def upsert_membership(db: Session, org: Organization, user: User, role: Role) ->
                 status=MembershipStatus.ACTIVE,
             )
         )
+        db.flush()
+
+
+def seed_services(db: Session, org: Organization) -> dict[str, Service]:
+    catalog: dict[str, Service] = {}
+    for spec in SERVICES:
+        name = spec["name"]
+        service = db.scalar(
+            select(Service).where(Service.organization_id == org.id, Service.name == name)
+        )
+        if service is None:
+            service = Service(
+                organization_id=org.id,
+                name=name,
+                description=spec["description"],
+                base_price=spec["base_price"],
+                duration_minutes=spec["duration_minutes"],
+            )
+            db.add(service)
+            db.flush()
+        catalog[name] = service
+    return catalog
+
+
+def seed_employees(db: Session, org: Organization, catalog: dict[str, Service]) -> list[Employee]:
+    roster: list[Employee] = []
+    for spec in EMPLOYEES:
+        email = spec["email"]
+        # The demo employee login already exists with a password; the rest do not.
+        user = upsert_user(
+            db,
+            email,
+            spec["first_name"],
+            spec["last_name"],
+            with_password=email == "employee@serviceflow.demo",
+        )
+        upsert_membership(db, org, user, Role.EMPLOYEE)
+
+        employee = db.scalar(
+            select(Employee).where(Employee.organization_id == org.id, Employee.user_id == user.id)
+        )
+        if employee is None:
+            employee = Employee(
+                organization_id=org.id, user_id=user.id, job_title=spec["job_title"]
+            )
+            db.add(employee)
+            db.flush()
+        employee.services = [catalog[name] for name in spec["services"]]
+        roster.append(employee)
+    return roster
+
+
+def seed_customers(db: Session, org: Organization, rng: random.Random) -> list[Customer]:
+    """Top the organization up to CUSTOMER_COUNT, demo customer included."""
+    records: list[Customer] = []
+
+    demo_user = db.scalar(select(User).where(User.email == "customer@serviceflow.demo"))
+    if demo_user is not None:
+        records.append(upsert_customer(db, org, demo_user, notes="Demo account."))
+
+    def total() -> int:
+        return (
+            db.scalar(
+                select(func.count()).select_from(Customer).where(Customer.organization_id == org.id)
+            )
+            or 0
+        )
+
+    used_emails: set[str] = set()
+    attempts = 0
+    while total() < CUSTOMER_COUNT and attempts < CUSTOMER_COUNT * 4:
+        attempts += 1
+        first = rng.choice(FIRST_NAMES)
+        last = rng.choice(LAST_NAMES)
+        email = f"{first}.{last}{attempts}@example.com".lower()
+        if email in used_emails:
+            continue
+        used_emails.add(email)
+
+        phone = f"+1 (415) 555-{rng.randint(1000, 9999)}"
+        user = upsert_user(db, email, first, last, phone=phone)
+        upsert_membership(db, org, user, Role.CUSTOMER)
+        records.append(upsert_customer(db, org, user, notes=rng.choice(CUSTOMER_NOTES)))
+
+    return records
+
+
+def upsert_customer(
+    db: Session, org: Organization, user: User, *, notes: str | None = None
+) -> Customer:
+    customer = db.scalar(
+        select(Customer).where(Customer.organization_id == org.id, Customer.user_id == user.id)
+    )
+    if customer is None:
+        customer = Customer(organization_id=org.id, user_id=user.id, notes=notes)
+        db.add(customer)
+        db.flush()
+    return customer
+
+
+def seed_vehicles(db: Session, org: Organization, rng: random.Random) -> int:
+    existing = (
+        db.scalar(
+            select(func.count()).select_from(Vehicle).where(Vehicle.organization_id == org.id)
+        )
+        or 0
+    )
+    if existing >= VEHICLE_COUNT:
+        return 0
+
+    customers = list(
+        db.scalars(select(Customer).where(Customer.organization_id == org.id).order_by(Customer.id))
+    )
+    if not customers:
+        return 0
+
+    # The demo customer gets two vehicles so their dashboard is not a single row.
+    demo_customer = next(
+        (c for c in customers if c.user.email == "customer@serviceflow.demo"), None
+    )
+
+    created = 0
+    targets = ([demo_customer, demo_customer] if demo_customer else []) + [
+        rng.choice(customers) for _ in range(VEHICLE_COUNT)
+    ]
+    for customer in targets:
+        if existing + created >= VEHICLE_COUNT or customer is None:
+            continue
+        make, model = rng.choice(VEHICLE_MODELS)
+        plate = "".join(rng.choices(string.ascii_uppercase, k=3)) + str(rng.randint(100, 999))
+        db.add(
+            Vehicle(
+                organization_id=org.id,
+                customer_id=customer.id,
+                year=rng.randint(2015, 2026),
+                make=make,
+                model=model,
+                color=rng.choice(COLORS),
+                license_plate=plate,
+                notes=None,
+            )
+        )
+        created += 1
+    db.flush()
+    return created
 
 
 def seed(db: Session) -> None:
+    rng = random.Random(SEED)
     org = upsert_organization(db)
+
     for email, first, last, role in DEMO_USERS:
-        user = upsert_user(db, email, first, last)
+        user = upsert_user(db, email, first, last, with_password=True)
         upsert_membership(db, org, user, role)
+
+    catalog = seed_services(db, org)
+    roster = seed_employees(db, org, catalog)
+    customers = seed_customers(db, org, rng)
+    vehicles = seed_vehicles(db, org, rng)
+
+    logger.info(
+        "seed complete",
+        extra={
+            "services": len(catalog),
+            "employees": len(roster),
+            "customers_touched": len(customers),
+            "vehicles_created": vehicles,
+        },
+    )
 
 
 def main() -> None:
     configure_logging()
+    from serviceflow.db.session import session_scope
+
     with session_scope() as db:
         seed(db)
+        totals = {
+            "services": db.scalar(select(func.count()).select_from(Service)),
+            "employees": db.scalar(select(func.count()).select_from(Employee)),
+            "customers": db.scalar(select(func.count()).select_from(Customer)),
+            "vehicles": db.scalar(select(func.count()).select_from(Vehicle)),
+        }
+
     print(f"Seed complete. Demo logins (password: {DEMO_PASSWORD}):")
     for email, _, _, role in DEMO_USERS:
         print(f"  {role.value:<9} {email}")
+    print("Totals: " + ", ".join(f"{k}={v}" for k, v in totals.items()))
 
 
 if __name__ == "__main__":

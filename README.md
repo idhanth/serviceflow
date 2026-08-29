@@ -4,8 +4,8 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 1 of 10 complete** (foundation, auth, organizations, roles,
-migrations). See [Roadmap](#roadmap).
+**Status: Phase 2 of 10 complete** (foundation and auth, plus customers,
+employees, services and vehicles). See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -49,7 +49,9 @@ Password for all three: `demo1234`
 | Employee | `employee@serviceflow.demo` |
 | Customer | `customer@serviceflow.demo` |
 
-The sign-in page has a one-click button for each.
+The sign-in page has a one-click button for each. The seed also creates the
+organization's catalog and book of business: 6 services, 5 employees,
+75 customers and 100 vehicles (PRD 49).
 
 ## Architecture
 
@@ -70,19 +72,21 @@ Two decisions worth knowing up front:
 ## Testing
 
 ```bash
-cd apps/api && uv run pytest        # 17 tests
+cd apps/api && uv run pytest        # 71 tests
 ```
 
 Covering health probes, the auth envelope, tenant isolation (including
-cross-organization probing), and per-organization role enforcement.
+cross-organization probing on every entity), per-organization role enforcement,
+the customer-vs-customer boundary, employee deactivation revoking access, and
+search, filtering and pagination.
 
 ## Roadmap
 
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Foundation: repo, auth, organizations, roles, migrations | done |
-| 2 | Customers, employees, services, vehicles | next |
-| 3 | Booking workflow, assignment, job lifecycle | |
+| 2 | Customers, employees, services, vehicles | done |
+| 3 | Booking workflow, assignment, job lifecycle | next |
 | 4 | Availability, conflict detection, transaction safety, calendar | |
 | 5 | Photos, notes, search, filtering, notifications | |
 | 6 | Redis, Celery, email, realtime | |

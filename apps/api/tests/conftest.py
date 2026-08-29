@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from decimal import Decimal
 
 import pytest
 
@@ -22,10 +23,14 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from serviceflow.auth.passwords import hash_password  # noqa: E402
 from serviceflow.db.models import Base  # noqa: E402
+from serviceflow.db.models.customer import Customer  # noqa: E402
+from serviceflow.db.models.employee import Employee  # noqa: E402
 from serviceflow.db.models.enums import MembershipStatus, Role  # noqa: E402
 from serviceflow.db.models.membership import OrganizationMembership  # noqa: E402
 from serviceflow.db.models.organization import Organization  # noqa: E402
+from serviceflow.db.models.service import Service  # noqa: E402
 from serviceflow.db.models.user import User  # noqa: E402
+from serviceflow.db.models.vehicle import Vehicle  # noqa: E402
 from serviceflow.db.session import get_engine, get_session_factory, reset_engine  # noqa: E402
 from serviceflow.main import create_app  # noqa: E402
 
@@ -91,13 +96,15 @@ def make_user(
     *,
     role: Role,
     email: str | None = None,
+    first_name: str | None = None,
+    last_name: str = "Tester",
 ) -> User:
     email = email or f"{role.value.lower()}-{uuid.uuid4().hex[:8]}@example.com"
     user = User(
         auth_provider_id=f"dev|{email}",
         email=email,
-        first_name=role.value.title(),
-        last_name="Tester",
+        first_name=first_name or role.value.title(),
+        last_name=last_name,
         password_hash=hash_password(TEST_PASSWORD),
     )
     db.add(user)
@@ -135,3 +142,96 @@ def auth_headers(
     if organization is not None:
         headers["X-Organization-Id"] = str(organization.id)
     return headers
+
+
+# ---------------------------------------------------------------- phase 2 factories
+
+
+def make_service(
+    db: Session,
+    organization: Organization,
+    *,
+    name: str = "Full Detail",
+    price: str = "310.00",
+    duration_minutes: int = 240,
+    active: bool = True,
+) -> Service:
+    service = Service(
+        organization_id=organization.id,
+        name=name,
+        description=f"{name} description",
+        base_price=Decimal(price),
+        duration_minutes=duration_minutes,
+        active=active,
+    )
+    db.add(service)
+    db.commit()
+    return service
+
+
+def make_customer(
+    db: Session,
+    organization: Organization,
+    *,
+    email: str | None = None,
+    first_name: str = "Casey",
+    last_name: str = "Customer",
+    notes: str | None = None,
+) -> Customer:
+    user = make_user(
+        db,
+        organization,
+        role=Role.CUSTOMER,
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+    )
+    customer = Customer(organization_id=organization.id, user_id=user.id, notes=notes)
+    db.add(customer)
+    db.commit()
+    return customer
+
+
+def make_employee(
+    db: Session,
+    organization: Organization,
+    *,
+    email: str | None = None,
+    job_title: str = "Detailer",
+    active: bool = True,
+    services: list[Service] | None = None,
+) -> Employee:
+    user = make_user(
+        db, organization, role=Role.EMPLOYEE, email=email, first_name="Erin", last_name="Employee"
+    )
+    employee = Employee(
+        organization_id=organization.id, user_id=user.id, job_title=job_title, active=active
+    )
+    employee.services = services or []
+    db.add(employee)
+    db.commit()
+    return employee
+
+
+def make_vehicle(
+    db: Session,
+    organization: Organization,
+    customer: Customer,
+    *,
+    year: int = 2022,
+    make: str = "BMW",
+    model: str = "M3",
+    license_plate: str | None = None,
+) -> Vehicle:
+    vehicle = Vehicle(
+        organization_id=organization.id,
+        customer_id=customer.id,
+        year=year,
+        make=make,
+        model=model,
+        color="Alpine White",
+        license_plate=license_plate,
+    )
+    db.add(vehicle)
+    db.commit()
+    return vehicle

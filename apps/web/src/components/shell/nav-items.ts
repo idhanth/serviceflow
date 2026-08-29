@@ -26,7 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Bookings", href: "/bookings", icon: ClipboardList, roles: ["ADMIN", "CUSTOMER"] },
   { label: "Jobs", href: "/jobs", icon: Sparkles, roles: ["ADMIN", "EMPLOYEE"] },
   { label: "Calendar", href: "/calendar", icon: CalendarDays, roles: ["ADMIN", "EMPLOYEE"] },
-  { label: "Vehicles", href: "/vehicles", icon: Car, roles: ["CUSTOMER"] },
+  { label: "Vehicles", href: "/vehicles", icon: Car, roles: ["ADMIN", "CUSTOMER"] },
   { label: "Customers", href: "/customers", icon: Users, roles: ["ADMIN"] },
   { label: "Employees", href: "/employees", icon: UserSquare, roles: ["ADMIN"] },
   { label: "Services", href: "/services", icon: Sparkles, roles: ["ADMIN"] },

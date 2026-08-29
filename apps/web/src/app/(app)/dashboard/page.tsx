@@ -1,10 +1,6 @@
-import { redirect } from "next/navigation";
-
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getActiveOrganizationId } from "@/lib/session";
-import { serverFetchData } from "@/lib/server-api";
-import type { Organization, SessionUser } from "@/lib/types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { requireSession } from "@/lib/session-context";
 
 function greeting(date: Date): string {
   const hour = date.getHours();
@@ -14,16 +10,7 @@ function greeting(date: Date): string {
 }
 
 export default async function DashboardPage() {
-  const [user, organization] = await Promise.all([
-    serverFetchData<SessionUser>("auth/me"),
-    serverFetchData<Organization>("organizations/current"),
-  ]);
-  if (!user || !organization) redirect("/login");
-
-  const activeOrganizationId = (await getActiveOrganizationId()) ?? organization.id;
-  const roles = user.memberships
-    .filter((m) => m.organization_id === activeOrganizationId)
-    .map((m) => m.role);
+  const { user, organization, roles } = await requireSession();
 
   const now = new Date();
   const dateLabel = new Intl.DateTimeFormat("en-US", {
