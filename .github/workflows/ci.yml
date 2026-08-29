@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JWT_SECRET: ci-secret-that-is-definitely-long-enough-1234
+
+jobs:
+  api:
+    name: API - lint, types, tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: serviceflow
+          POSTGRES_PASSWORD: serviceflow
+          POSTGRES_DB: serviceflow
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U serviceflow"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://serviceflow:serviceflow@127.0.0.1:5433/serviceflow
+      REDIS_URL: redis://127.0.0.1:6380/0
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --frozen
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Typecheck
+        run: uv run mypy src
+      - name: Migrations apply cleanly
+        run: uv run alembic upgrade head
+      - name: Tests
+        run: uv run pytest
+
+  web:
+    name: Web - lint, types, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npx eslint .
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build

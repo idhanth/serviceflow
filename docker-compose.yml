@@ -1,0 +1,53 @@
+# Deployment-parity stack. The local machine this was built on has no Docker, so
+# scripts/services.sh runs Postgres and Redis without it; both paths use the same
+# ports, so .env works unchanged either way.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: serviceflow
+      POSTGRES_PASSWORD: serviceflow
+      POSTGRES_DB: serviceflow
+    ports: ["5433:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serviceflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", ""]
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://serviceflow:serviceflow@db:5432/serviceflow
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in your environment}
+      CORS_ORIGINS: http://localhost:3000
+      ENVIRONMENT: local
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      API_URL: http://api:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
