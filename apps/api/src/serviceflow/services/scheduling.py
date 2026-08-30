@@ -1,38 +1,42 @@
-"""The seam where phase 4's scheduling engine plugs in.
+"""The scheduling policy consulted whenever work is assigned to an employee.
 
-Phase 3 only enforces what it can decide without an availability model: the
-employee must belong to the organization, be active, and be qualified for the
-service. Phase 4 adds weekly availability, date overrides, overlap detection and
-the locking that makes concurrent assignment safe (PRD 9, 10).
+Phase 3 established this seam: `check_assignment` is called from inside the
+booking-confirmation transaction with the live `Session`, and reschedule and
+reassign call it too. Phase 4 fills it in without changing any of those callers.
 
-Those checks belong *inside* `SchedulingPolicy.check_assignment`, which is called
-from within the confirmation transaction with the live `Session`. A phase 4
-implementation can therefore issue `SELECT ... FOR UPDATE` against employee jobs
-and have it participate in the same transaction that writes the job - no caller
-changes required.
-
-To extend in phase 4: write a new policy class, and return it from
-`get_scheduling_policy`. Do not scatter availability checks into the booking
-service or the route handlers.
+`SchedulingPolicy` is still the extension point. `QualificationPolicy` remains as
+the base layer (organization, active, qualified) and `AvailabilityPolicy` - the
+default from phase 4 onward - adds the working-hours check, the advisory lock and
+overlap detection on top of it.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from serviceflow.core.errors import ValidationFailed
+from serviceflow.core.errors import ScheduleConflict, ValidationFailed
+from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.employee import Employee
+from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
+from serviceflow.services.availability import (
+    DateOverride,
+    WeeklyWindow,
+    evaluate_window,
+)
+from serviceflow.services.conflicts import lock_employee_schedule, overlapping_jobs
 
 
 @dataclass(frozen=True, slots=True)
 class AssignmentRequest:
-    """Everything a scheduling decision needs, so the signature survives phase 4."""
+    """Everything a scheduling decision needs."""
 
     organization_id: uuid.UUID
     employee: Employee
@@ -49,11 +53,45 @@ class SchedulingPolicy(Protocol):
         ...
 
 
-class QualificationPolicy:
-    """Phase 3 rules: the employee must be active and qualified.
+# --------------------------------------------------------------- loading
 
-    Phase 4 will subclass or replace this to add availability and overlap checks.
-    """
+
+def organization_timezone(db: Session, organization_id: uuid.UUID) -> str:
+    organization = db.get(Organization, organization_id)
+    return organization.timezone if organization is not None else "UTC"
+
+
+def weekly_windows(db: Session, employee_id: uuid.UUID) -> list[WeeklyWindow]:
+    rows = db.scalars(
+        select(EmployeeAvailability).where(EmployeeAvailability.employee_id == employee_id)
+    )
+    return [
+        WeeklyWindow(day_of_week=row.day_of_week, start_time=row.start_time, end_time=row.end_time)
+        for row in rows
+    ]
+
+
+def date_overrides(db: Session, employee_id: uuid.UUID) -> dict[dt.date, DateOverride]:
+    rows = db.scalars(
+        select(AvailabilityOverride).where(AvailabilityOverride.employee_id == employee_id)
+    )
+    return {
+        row.date: DateOverride(
+            date=row.date,
+            available=row.available,
+            start_time=row.start_time,
+            end_time=row.end_time,
+            reason=row.reason,
+        )
+        for row in rows
+    }
+
+
+# --------------------------------------------------------------- policies
+
+
+class QualificationPolicy:
+    """Who is even eligible: in the organization, active, and trained for the work."""
 
     def check_assignment(self, db: Session, request: AssignmentRequest) -> None:
         employee = request.employee
@@ -79,7 +117,57 @@ class QualificationPolicy:
             )
 
 
-_policy: SchedulingPolicy = QualificationPolicy()
+class AvailabilityPolicy(QualificationPolicy):
+    """The full phase 4 rules.
+
+    Order matters. Eligibility is checked first because it is cheap and its
+    failures are the admin's fault rather than a race. Only then does the
+    transaction take the advisory lock and look for overlaps, so a request that
+    was never going to succeed does not serialise everyone else.
+    """
+
+    def check_assignment(self, db: Session, request: AssignmentRequest) -> None:
+        super().check_assignment(db, request)
+
+        employee = request.employee
+
+        verdict = evaluate_window(
+            request.start,
+            request.end,
+            timezone=organization_timezone(db, request.organization_id),
+            weekly=weekly_windows(db, employee.id),
+            overrides=date_overrides(db, employee.id),
+        )
+        if verdict.blocked:
+            raise ScheduleConflict(
+                f"{employee.user.full_name} isn't available then. {verdict.reason}",
+                details={"fields": {"employee_id": verdict.reason}},
+            )
+
+        # From here on the answer depends on rows another transaction could be
+        # writing right now, so serialise this employee's schedule first.
+        lock_employee_schedule(db, employee.id)
+
+        clashes = overlapping_jobs(
+            db,
+            organization_id=request.organization_id,
+            employee_id=employee.id,
+            start=request.start,
+            end=request.end,
+            exclude_job_id=request.exclude_job_id,
+        )
+        if clashes:
+            first = clashes[0]
+            raise ScheduleConflict(
+                f"{employee.user.full_name} is already booked during that time.",
+                details={
+                    "fields": {"employee_id": "Already assigned during this window."},
+                    "conflicting_job_id": str(first.id),
+                },
+            )
+
+
+_policy: SchedulingPolicy = AvailabilityPolicy()
 
 
 def get_scheduling_policy() -> SchedulingPolicy:
@@ -87,6 +175,10 @@ def get_scheduling_policy() -> SchedulingPolicy:
 
 
 def set_scheduling_policy(policy: SchedulingPolicy) -> None:
-    """Swap the policy. Phase 4 uses this; tests use it to assert the seam works."""
+    """Swap the policy. Used by tests to isolate a single rule."""
     global _policy
     _policy = policy
+
+
+def reset_scheduling_policy() -> None:
+    set_scheduling_policy(AvailabilityPolicy())

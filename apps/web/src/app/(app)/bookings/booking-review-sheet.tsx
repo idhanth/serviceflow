@@ -7,6 +7,7 @@ import { useState } from "react";
 import { ConfirmDialog } from "@/components/data/confirm-dialog";
 import { BookingStatusBadge, JobStatusBadge } from "@/components/data/status-badge";
 import { ErrorState } from "@/components/data/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -256,28 +257,71 @@ export function BookingReviewSheet({
                       </p>
                     ) : null}
 
+                    {candidates.isSuccess &&
+                    candidates.data.data.length > 0 &&
+                    !candidates.data.data.some((c) => c.assignable) ? (
+                      <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-amber-500/10 p-3 text-sm">
+                        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                        Everyone qualified is either off or already booked then. Reschedule
+                        the booking, or adjust someone&apos;s availability.
+                      </p>
+                    ) : null}
+
+                    <p className="text-sm text-muted-foreground">
+                      Ranked by who is free, then by how light their day already is.
+                    </p>
+
                     <div className="space-y-2">
-                      {(candidates.data?.data ?? []).map((candidate) => (
+                      {(candidates.data?.data ?? []).map((candidate, index) => (
                         <label
                           key={candidate.id}
                           className={cn(
-                            "flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors duration-150 hover:bg-accent/50",
+                            "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors duration-150",
+                            candidate.assignable
+                              ? "hover:bg-accent/50"
+                              : "cursor-not-allowed opacity-70",
                             employeeId === candidate.id && "border-primary/50 bg-primary/5",
                           )}
                         >
                           <input
                             type="radio"
                             name="assignee"
-                            className="size-4 accent-primary"
+                            className="mt-1 size-4 accent-primary"
                             checked={employeeId === candidate.id}
+                            disabled={!candidate.assignable}
                             onChange={() => setEmployeeId(candidate.id)}
                           />
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium">
-                              {candidate.full_name}
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {candidate.full_name}
+                              </span>
+                              {index === 0 && candidate.assignable ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-emerald-600/30 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/30 dark:text-emerald-300"
+                                >
+                                  Recommended
+                                </Badge>
+                              ) : null}
+                              {!candidate.assignable ? (
+                                <Badge variant="outline" className="bg-muted text-muted-foreground">
+                                  {candidate.conflict ? "Busy" : "Unavailable"}
+                                </Badge>
+                              ) : null}
                             </span>
                             <span className="block truncate text-sm text-muted-foreground">
                               {candidate.job_title}
+                            </span>
+                            {/* The evidence behind the ranking, so it is explained
+                                rather than asserted. */}
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              {candidate.reason ??
+                                `${candidate.jobs_today} ${
+                                  candidate.jobs_today === 1 ? "job" : "jobs"
+                                } that day · ${formatDuration(
+                                  candidate.scheduled_minutes_today,
+                                )} scheduled`}
                             </span>
                           </span>
                         </label>

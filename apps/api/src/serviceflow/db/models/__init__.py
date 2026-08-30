@@ -1,6 +1,10 @@
 """Model registry. Import every model here so Alembic autogenerate sees them."""
 
 from serviceflow.db.base import Base
+from serviceflow.db.models.availability import (
+    AvailabilityOverride,
+    EmployeeAvailability,
+)
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee, employee_services
@@ -23,11 +27,13 @@ from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
 
 __all__ = [
+    "AvailabilityOverride",
     "Base",
     "Booking",
     "BookingStatus",
     "Customer",
     "Employee",
+    "EmployeeAvailability",
     "Job",
     "JobStatus",
     "MembershipStatus",

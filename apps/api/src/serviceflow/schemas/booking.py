@@ -136,9 +136,19 @@ class BookingNotesUpdate(BaseModel):
 
 
 class AssignableEmployee(BaseModel):
-    """A candidate for assignment. Phase 4 adds availability and workload here."""
+    """A ranked candidate, with the facts behind their position (PRD 11).
+
+    The admin UI renders these fields directly, so a recommendation is explained
+    rather than asserted.
+    """
 
     id: uuid.UUID
     full_name: str
     job_title: str
-    active: bool
+    available: bool
+    conflict: bool
+    assignable: bool
+    reason: str | None = None
+    jobs_today: int
+    scheduled_minutes_today: int
+    conflicting_job_id: uuid.UUID | None = None

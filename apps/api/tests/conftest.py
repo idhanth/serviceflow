@@ -6,6 +6,8 @@ import os
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from datetime import date as dt_date
+from datetime import time as dt_time
 from decimal import Decimal
 
 import pytest
@@ -18,12 +20,20 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ.setdefault("JWT_SECRET", "test-secret-that-is-definitely-long-enough-123")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6380/1")
 
+import pathlib  # noqa: E402
+
 import psycopg  # noqa: E402
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from serviceflow.auth.passwords import hash_password  # noqa: E402
 from serviceflow.db.models import Base  # noqa: E402
+from serviceflow.db.models.availability import (  # noqa: E402
+    AvailabilityOverride,
+    EmployeeAvailability,
+)
 from serviceflow.db.models.booking import Booking  # noqa: E402
 from serviceflow.db.models.customer import Customer  # noqa: E402
 from serviceflow.db.models.employee import Employee  # noqa: E402
@@ -39,7 +49,7 @@ from serviceflow.db.models.organization import Organization  # noqa: E402
 from serviceflow.db.models.service import Service  # noqa: E402
 from serviceflow.db.models.user import User  # noqa: E402
 from serviceflow.db.models.vehicle import Vehicle  # noqa: E402
-from serviceflow.db.session import get_engine, get_session_factory, reset_engine  # noqa: E402
+from serviceflow.db.session import get_session_factory, reset_engine  # noqa: E402
 from serviceflow.main import create_app  # noqa: E402
 
 TEST_PASSWORD = "test-password-123"
@@ -54,14 +64,30 @@ def _admin_dsn() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def _database() -> Iterator[None]:
+    """Build the test schema by running the real migrations.
+
+    Not `Base.metadata.create_all`: the scheduling guarantee lives in a
+    PostgreSQL exclusion constraint and the btree_gist extension, neither of
+    which SQLAlchemy metadata knows about. Tests have to run against the schema
+    that actually ships, or the concurrency tests would pass against a database
+    missing the very constraint they exist to prove.
+    """
     name = TEST_DATABASE_URL.rsplit("/", 1)[1]
     with psycopg.connect(_admin_dsn(), autocommit=True) as conn:
         exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone()
         if not exists:
             conn.execute(f'CREATE DATABASE "{name}"')
+
+    # Start from nothing so a stale schema can never mask a broken migration.
+    plain_dsn = TEST_DATABASE_URL.replace("postgresql+psycopg://", "postgresql://")
+    with psycopg.connect(plain_dsn, autocommit=True) as conn:
+        conn.execute("DROP SCHEMA public CASCADE")
+        conn.execute("CREATE SCHEMA public")
+
+    config = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    command.upgrade(config, "head")
+
     reset_engine()
-    Base.metadata.drop_all(get_engine())
-    Base.metadata.create_all(get_engine())
     yield
     reset_engine()
 
@@ -208,7 +234,15 @@ def make_employee(
     job_title: str = "Detailer",
     active: bool = True,
     services: list[Service] | None = None,
+    always_available: bool = True,
 ) -> Employee:
+    """Create an employee, available around the clock unless told otherwise.
+
+    Phase 4 enforces working hours, so a schedule-less employee can no longer be
+    assigned anything. Tests that are not about availability get a full week by
+    default; tests that are about it pass `always_available=False` and build the
+    schedule they mean to exercise.
+    """
     user = make_user(
         db, organization, role=Role.EMPLOYEE, email=email, first_name="Erin", last_name="Employee"
     )
@@ -218,7 +252,56 @@ def make_employee(
     employee.services = services or []
     db.add(employee)
     db.commit()
+
+    if always_available:
+        set_weekly_availability(db, employee, days=range(7), start="00:00", end="23:59")
     return employee
+
+
+def set_weekly_availability(
+    db: Session,
+    employee: Employee,
+    *,
+    days: object,
+    start: str,
+    end: str,
+) -> None:
+    """Add one recurring window on each of `days` (Monday 0 ... Sunday 6)."""
+    for day in days:  # type: ignore[attr-defined]
+        db.add(
+            EmployeeAvailability(
+                organization_id=employee.organization_id,
+                employee_id=employee.id,
+                day_of_week=day,
+                start_time=dt_time.fromisoformat(start),
+                end_time=dt_time.fromisoformat(end),
+            )
+        )
+    db.commit()
+
+
+def set_override(
+    db: Session,
+    employee: Employee,
+    *,
+    date: dt_date,
+    available: bool,
+    start: str | None = None,
+    end: str | None = None,
+    reason: str | None = None,
+) -> AvailabilityOverride:
+    override = AvailabilityOverride(
+        organization_id=employee.organization_id,
+        employee_id=employee.id,
+        date=date,
+        available=available,
+        start_time=dt_time.fromisoformat(start) if start else None,
+        end_time=dt_time.fromisoformat(end) if end else None,
+        reason=reason,
+    )
+    db.add(override)
+    db.commit()
+    return override
 
 
 def make_vehicle(

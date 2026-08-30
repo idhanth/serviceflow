@@ -107,22 +107,35 @@ def create_booking(
 @router.get(
     "/{booking_id}/assignable-employees",
     response_model=DataResponse[list[AssignableEmployee]],
-    summary="Employees who could take this booking",
+    summary="Qualified employees, ranked for this booking",
 )
 def list_assignable_employees(
     booking_id: uuid.UUID, current_user: AdminUser, db: DbSession
 ) -> DataResponse[list[AssignableEmployee]]:
-    booking = bookings_service.load_booking(db, current_user.organization_id, booking_id)
-    candidates = bookings_service.assignable_employees(db, current_user.organization_id, booking)
+    """Ranked by availability, then by how light their day already is (PRD 11).
+
+    Everyone qualified is returned, including those who are off or already busy,
+    each carrying the reason - the admin should see why someone is ranked low
+    rather than wonder where they went.
+    """
+    recommendations = bookings_service.recommended_employees(
+        db, current_user.organization_id, booking_id
+    )
     return DataResponse[list[AssignableEmployee]](
         data=[
             AssignableEmployee(
-                id=employee.id,
-                full_name=employee.user.full_name,
-                job_title=employee.job_title,
-                active=employee.active,
+                id=item.employee_id,
+                full_name=item.full_name,
+                job_title=item.job_title,
+                available=item.available,
+                conflict=item.conflict,
+                assignable=item.assignable,
+                reason=item.reason,
+                jobs_today=item.jobs_today,
+                scheduled_minutes_today=item.scheduled_minutes_today,
+                conflicting_job_id=item.conflicting_job_id,
             )
-            for employee in candidates
+            for item in recommendations
         ]
     )
 

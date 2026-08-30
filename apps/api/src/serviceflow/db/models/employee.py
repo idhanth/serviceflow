@@ -11,6 +11,10 @@ from serviceflow.db.base import Base, Timestamps, UUIDPrimaryKey
 from serviceflow.db.models.mixins import OrganizationScoped
 
 if TYPE_CHECKING:
+    from serviceflow.db.models.availability import (
+        AvailabilityOverride,
+        EmployeeAvailability,
+    )
     from serviceflow.db.models.service import Service
     from serviceflow.db.models.user import User
 
@@ -53,4 +57,10 @@ class Employee(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
     user: Mapped[User] = relationship(lazy="joined")
     services: Mapped[list[Service]] = relationship(
         secondary=employee_services, back_populates="employees"
+    )
+    availability: Mapped[list[EmployeeAvailability]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
+    availability_overrides: Mapped[list[AvailabilityOverride]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
     )

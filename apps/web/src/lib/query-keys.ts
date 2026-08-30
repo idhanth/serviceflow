@@ -26,6 +26,14 @@ export const queryKeys = {
     detail: (id: string) => ["bookings", "detail", id] as const,
     assignable: (id: string) => ["bookings", "assignable", id] as const,
   },
+  availability: {
+    all: ["availability"] as const,
+    detail: (employeeId: string) => ["availability", employeeId] as const,
+  },
+  calendar: {
+    all: ["calendar"] as const,
+    range: (params: Record<string, unknown>) => ["calendar", "range", params] as const,
+  },
   jobs: {
     all: ["jobs"] as const,
     list: (params: Record<string, unknown>) => ["jobs", "list", params] as const,

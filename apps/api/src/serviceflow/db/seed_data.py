@@ -324,3 +324,51 @@ CUSTOMER_NOTES = [
     "Ceramic coating applied last year - avoid harsh chemicals.",
     "Gate code needed for pickup.",
 ]
+
+
+class ShiftSpec(TypedDict):
+    days: list[int]
+    start: str
+    end: str
+
+
+# Weekly schedules, keyed by employee email. Weekday numbering is Python's:
+# Monday 0 ... Sunday 6. Deliberately varied so availability actually filters
+# candidates in the demo instead of everyone being free all week.
+WEEKLY_SHIFTS: dict[str, list[ShiftSpec]] = {
+    "employee@serviceflow.demo": [
+        {"days": [0, 1, 2, 3, 4], "start": "08:00", "end": "17:00"},
+        {"days": [5], "start": "09:00", "end": "14:00"},
+    ],
+    "daniel.okafor@gleamdetailing.demo": [
+        {"days": [0, 1, 2, 3, 4], "start": "09:00", "end": "18:00"},
+    ],
+    "priya.raman@gleamdetailing.demo": [
+        # Split shift, with Wednesday off.
+        {"days": [0, 1, 3, 4], "start": "08:00", "end": "12:00"},
+        {"days": [0, 1, 3, 4], "start": "13:00", "end": "18:00"},
+        {"days": [5], "start": "10:00", "end": "16:00"},
+    ],
+    "marcus.webb@gleamdetailing.demo": [
+        {"days": [1, 2, 3, 4, 5], "start": "10:00", "end": "19:00"},
+    ],
+    "sofia.lindqvist@gleamdetailing.demo": [
+        {"days": [0, 2, 4], "start": "07:00", "end": "16:00"},
+        {"days": [6], "start": "10:00", "end": "15:00"},
+    ],
+}
+
+# Date overrides, as (day offset from today, available, start, end, reason).
+OVERRIDE_SPECS: dict[str, list[tuple[int, bool, str | None, str | None, str]]] = {
+    "employee@serviceflow.demo": [
+        (9, False, None, None, "Vacation"),
+        (10, False, None, None, "Vacation"),
+        (3, True, "07:00", "20:00", "Covering a late finish"),
+    ],
+    "priya.raman@gleamdetailing.demo": [
+        (2, False, None, None, "Training day"),
+    ],
+    "marcus.webb@gleamdetailing.demo": [
+        (5, True, "08:00", "12:00", "Half day"),
+    ],
+}

@@ -20,7 +20,20 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/bookings/:path*", "/jobs/:path*", "/calendar/:path*",
-    "/customers/:path*", "/employees/:path*", "/services/:path*", "/analytics/:path*",
-    "/activity/:path*", "/settings/:path*"],
+  // Every authenticated route. The pages redirect on their own too, via
+  // requireSession - this just avoids rendering one at all when signed out.
+  matcher: [
+    "/dashboard/:path*",
+    "/bookings/:path*",
+    "/jobs/:path*",
+    "/calendar/:path*",
+    "/availability/:path*",
+    "/vehicles/:path*",
+    "/customers/:path*",
+    "/employees/:path*",
+    "/services/:path*",
+    "/analytics/:path*",
+    "/activity/:path*",
+    "/settings/:path*",
+  ],
 };

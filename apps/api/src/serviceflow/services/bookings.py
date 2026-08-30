@@ -23,6 +23,7 @@ from serviceflow.core.errors import (
     Forbidden,
     InvalidStateTransition,
     NotFound,
+    ScheduleConflict,
     ValidationFailed,
 )
 from serviceflow.core.pagination import Page, PageParams
@@ -33,7 +34,9 @@ from serviceflow.db.models.enums import BookingStatus, JobStatus, Role
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.customers import get_customer, get_customer_for_user
+from serviceflow.services.recommendations import EmployeeRecommendation, recommend_employees
 from serviceflow.services.scheduling import AssignmentRequest, get_scheduling_policy
 from serviceflow.services.state_machine import transition_booking, transition_job
 
@@ -314,24 +317,22 @@ def create_booking(
 # ----------------------------------------------------------------- assignment
 
 
-def assignable_employees(
-    db: Session, organization_id: uuid.UUID, booking: Booking
-) -> list[Employee]:
-    """Active employees qualified for this booking's service.
+def recommended_employees(
+    db: Session, organization_id: uuid.UUID, booking_id: uuid.UUID
+) -> list[EmployeeRecommendation]:
+    """Rank the qualified employees for a booking's service and window (PRD 11)."""
+    booking = load_booking(db, organization_id, booking_id)
+    service = db.get(Service, booking.service_id)
+    if service is None:  # pragma: no cover - FK guarantees this
+        raise NotFound("We couldn't find that service.")
 
-    Phase 4 ranks these by availability and workload (PRD 11); phase 3 only
-    filters to those who could legally take the work.
-    """
-    return list(
-        db.scalars(
-            select(Employee)
-            .where(
-                Employee.organization_id == organization_id,
-                Employee.active.is_(True),
-                Employee.services.any(Service.id == booking.service_id),
-            )
-            .order_by(Employee.job_title)
-        ).unique()
+    return recommend_employees(
+        db,
+        organization_id,
+        service=service,
+        start=booking.requested_start,
+        end=booking.requested_end,
+        exclude_job_id=booking.job.id if booking.job is not None else None,
     )
 
 
@@ -408,6 +409,14 @@ def confirm_booking(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        # Two different constraints can fire here, and they mean different things.
+        if is_overlap_violation(exc):
+            # The exclusion constraint caught a schedule clash the policy missed -
+            # only reachable if a competing transaction committed in between.
+            raise ScheduleConflict(
+                "That technician was just assigned overlapping work."
+                " Pick someone else, or a different time."
+            ) from exc
         # The unique constraint fired: another request confirmed this booking.
         raise InvalidStateTransition("This booking has already been confirmed.") from exc
     except Exception:
@@ -528,6 +537,13 @@ def reschedule_booking(
                 "Work on this booking has already started, so it can't be moved."
             )
         db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if is_overlap_violation(exc):
+            raise ScheduleConflict(
+                "That new time overlaps other work already assigned to this technician."
+            ) from exc
+        raise
     except Exception:
         db.rollback()
         raise

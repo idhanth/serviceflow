@@ -15,10 +15,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, lazyload
 from sqlalchemy.orm.interfaces import LoaderOption
 
-from serviceflow.core.errors import InvalidStateTransition, NotFound
+from serviceflow.core.errors import InvalidStateTransition, NotFound, ScheduleConflict
 from serviceflow.core.pagination import Page, PageParams
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
@@ -26,6 +27,7 @@ from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import JobStatus, Role
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
+from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.employees import get_employee_for_user
 from serviceflow.services.scheduling import AssignmentRequest, get_scheduling_policy
 from serviceflow.services.state_machine import transition_job
@@ -124,6 +126,51 @@ def list_jobs(
         ).unique()
     )
     return Page(items=items, total=total)
+
+
+def jobs_in_range(
+    db: Session,
+    organization_id: uuid.UUID,
+    *,
+    roles: frozenset[Role],
+    user_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+    employee_id: uuid.UUID | None = None,
+    service_id: uuid.UUID | None = None,
+    status: JobStatus | None = None,
+) -> list[Job]:
+    """Jobs overlapping [start, end), for the calendar.
+
+    Overlap rather than containment, so a job that begins before the window and
+    runs into it still appears. Employees are pinned to their own work; an
+    employee_id filter cannot widen that.
+    """
+    filters = [
+        Job.organization_id == organization_id,
+        Job.scheduled_start < end,
+        Job.scheduled_end > start,
+    ]
+
+    scope = _scoped_employee_id(db, organization_id, roles=roles, user_id=user_id)
+    if scope is not None:
+        filters.append(Job.employee_id == scope)
+    elif employee_id is not None:
+        filters.append(Job.employee_id == employee_id)
+
+    if status is not None:
+        filters.append(Job.status == status)
+    if service_id is not None:
+        filters.append(Job.booking.has(Booking.service_id == service_id))
+
+    return list(
+        db.scalars(
+            select(Job)
+            .where(*filters)
+            .options(*_job_options())
+            .order_by(Job.scheduled_start.asc(), Job.id.asc())
+        ).unique()
+    )
 
 
 def _reload(db: Session, organization_id: uuid.UUID, job_id: uuid.UUID) -> Job:
@@ -233,6 +280,13 @@ def reassign_job(
         )
         job.employee_id = employee.id
         db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if is_overlap_violation(exc):
+            raise ScheduleConflict(
+                f"{employee.user.full_name} already has overlapping work at that time."
+            ) from exc
+        raise
     except Exception:
         db.rollback()
         raise

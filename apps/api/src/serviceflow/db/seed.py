@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from serviceflow.auth.passwords import hash_password
 from serviceflow.core.logging import configure_logging
+from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee
@@ -27,6 +28,7 @@ from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.db.seed_availability import seed_availability
 from serviceflow.db.seed_bookings import seed_bookings
 from serviceflow.db.seed_data import (
     COLORS,
@@ -270,6 +272,8 @@ def seed(db: Session) -> None:
     roster = seed_employees(db, org, catalog)
     customers = seed_customers(db, org, rng)
     vehicles = seed_vehicles(db, org, rng)
+    # Availability has to exist before bookings, which schedule around it.
+    schedules = seed_availability(db, org)
     workload = seed_bookings(db, org, rng)
 
     logger.info(
@@ -279,6 +283,8 @@ def seed(db: Session) -> None:
             "employees": len(roster),
             "customers_touched": len(customers),
             "vehicles_created": vehicles,
+            "availability_windows": schedules["availability_windows"],
+            "overrides": schedules["overrides"],
             "bookings_created": workload["bookings"],
             "jobs_created": workload["jobs"],
         },
@@ -301,6 +307,8 @@ def main() -> None:
             "completed_jobs": db.scalar(
                 select(func.count()).select_from(Job).where(Job.status == JobStatus.COMPLETED)
             ),
+            "availability": db.scalar(select(func.count()).select_from(EmployeeAvailability)),
+            "overrides": db.scalar(select(func.count()).select_from(AvailabilityOverride)),
         }
 
     print(f"Seed complete. Demo logins (password: {DEMO_PASSWORD}):")

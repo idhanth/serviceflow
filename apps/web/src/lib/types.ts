@@ -165,7 +165,13 @@ export interface AssignableEmployee {
   id: string;
   full_name: string;
   job_title: string;
-  active: boolean;
+  available: boolean;
+  conflict: boolean;
+  assignable: boolean;
+  reason: string | null;
+  jobs_today: number;
+  scheduled_minutes_today: number;
+  conflicting_job_id: string | null;
 }
 
 export interface JobEmployee {
@@ -189,4 +195,60 @@ export interface Job {
   service: BookingService;
   customer_notes: string | null;
   created_at: string;
+}
+
+// ---------------------------------------------------------------- phase 4
+
+/** Weekday numbering matches the API: Monday 0 ... Sunday 6. */
+export interface WeeklyWindow {
+  id: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+}
+
+export interface WeeklyWindowInput {
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+}
+
+export interface AvailabilityOverride {
+  id: string;
+  date: string;
+  available: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string | null;
+}
+
+export interface Availability {
+  employee_id: string;
+  full_name: string;
+  timezone: string;
+  weekly: WeeklyWindow[];
+  overrides: AvailabilityOverride[];
+}
+
+export interface CalendarEvent {
+  id: string;
+  booking_id: string;
+  status: JobStatus;
+  scheduled_start: string;
+  scheduled_end: string;
+  duration_minutes: number;
+  employee_id: string;
+  employee_name: string;
+  service_id: string;
+  service_name: string;
+  customer_name: string;
+  vehicle_name: string;
+}
+
+export interface CalendarFeed {
+  timezone: string;
+  start: string;
+  end: string;
+  data: CalendarEvent[];
+  can_filter_by_employee: boolean;
 }

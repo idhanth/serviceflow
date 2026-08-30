@@ -8,6 +8,7 @@ timezone before being stored as UTC (PRD 40).
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import random
 import uuid
@@ -25,6 +26,11 @@ from serviceflow.db.models.job import Job
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.services.availability import (
+    DateOverride,
+    WeeklyWindow,
+    evaluate_window,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,68 @@ def _local_slot(rng: random.Random, tz: ZoneInfo, day_offset: int) -> datetime:
 
 def _qualified(employees: list[Employee], service: Service) -> list[Employee]:
     return [e for e in employees if e.active and any(s.id == service.id for s in e.services)]
+
+
+class Schedule:
+    """Tracks who is busy while seeding, so generated jobs never overlap.
+
+    The database now carries an exclusion constraint that forbids overlapping
+    assignments, so a seed that ignored this would simply fail to insert. It also
+    honours each employee's weekly availability, which keeps the demo calendar
+    and the recommendation panel coherent.
+    """
+
+    def __init__(self, timezone: str) -> None:
+        self._timezone = timezone
+        self._busy: dict[uuid.UUID, list[tuple[datetime, datetime]]] = {}
+        self._weekly: dict[uuid.UUID, list[WeeklyWindow]] = {}
+        self._overrides: dict[uuid.UUID, dict[dt.date, DateOverride]] = {}
+
+    def load(self, db: Session, employees: list[Employee]) -> None:
+        for employee in employees:
+            self._weekly[employee.id] = [
+                WeeklyWindow(
+                    day_of_week=window.day_of_week,
+                    start_time=window.start_time,
+                    end_time=window.end_time,
+                )
+                for window in employee.availability
+            ]
+            self._overrides[employee.id] = {
+                override.date: DateOverride(
+                    date=override.date,
+                    available=override.available,
+                    start_time=override.start_time,
+                    end_time=override.end_time,
+                    reason=override.reason,
+                )
+                for override in employee.availability_overrides
+            }
+            self._busy.setdefault(employee.id, [])
+
+    def free(self, employee: Employee, start: datetime, end: datetime) -> bool:
+        if any(s < end and e > start for s, e in self._busy.get(employee.id, [])):
+            return False
+        return evaluate_window(
+            start,
+            end,
+            timezone=self._timezone,
+            weekly=self._weekly.get(employee.id, []),
+            overrides=self._overrides.get(employee.id, {}),
+        ).available
+
+    def take(self, employee: Employee, start: datetime, end: datetime) -> None:
+        self._busy.setdefault(employee.id, []).append((start, end))
+
+    def pick(
+        self, rng: random.Random, candidates: list[Employee], start: datetime, end: datetime
+    ) -> Employee | None:
+        order = sorted(candidates, key=lambda e: str(e.id))
+        rng.shuffle(order)
+        for employee in order:
+            if self.free(employee, start, end):
+                return employee
+        return None
 
 
 def _add_booking(
@@ -130,6 +198,7 @@ def seed_demo_customer_story(
     services: list[Service],
     employees: list[Employee],
     vehicles_by_customer: dict[uuid.UUID, list[Vehicle]],
+    schedule: Schedule,
 ) -> None:
     """Give the demo customer and demo employee something worth looking at.
 
@@ -165,18 +234,25 @@ def seed_demo_customer_story(
         return
 
     # A job scheduled today and not yet started, so "Start job" is demoable.
-    today = _local_slot(rng, tz, 0)
-    booking = _add_booking(
-        db,
-        org,
-        customer=demo_customer,
-        vehicle=fleet[0],
-        service=by_name["Full Detail"],
-        start=today,
-        status=BookingStatus.CONFIRMED,
-        customer_notes="Please pay extra attention to the wheels.",
-    )
-    _add_job(db, org, booking, demo_employee, JobStatus.ASSIGNED)
+    # Retried until it lands inside the demo employee's working hours.
+    service = by_name["Full Detail"]
+    for _ in range(60):
+        today = _local_slot(rng, tz, 0)
+        end = today + timedelta(minutes=service.duration_minutes)
+        if schedule.free(demo_employee, today, end):
+            booking = _add_booking(
+                db,
+                org,
+                customer=demo_customer,
+                vehicle=fleet[0],
+                service=service,
+                start=today,
+                status=BookingStatus.CONFIRMED,
+                customer_notes="Please pay extra attention to the wheels.",
+            )
+            _add_job(db, org, booking, demo_employee, JobStatus.ASSIGNED)
+            schedule.take(demo_employee, today, end)
+            break
 
     # A pending request waiting on admin review.
     _add_booking(
@@ -192,20 +268,28 @@ def seed_demo_customer_story(
 
     # Two finished visits, so the customer has history.
     for offset, service_name in ((-30, "Express Wash"), (-75, "Ceramic Coating")):
-        service = by_name[service_name]
-        candidates = _qualified(employees, service)
+        past_service = by_name[service_name]
+        candidates = _qualified(employees, past_service)
         if not candidates:
             continue
-        past = _add_booking(
-            db,
-            org,
-            customer=demo_customer,
-            vehicle=fleet[0],
-            service=service,
-            start=_local_slot(rng, tz, offset),
-            status=BookingStatus.CONFIRMED,
-        )
-        _add_job(db, org, past, rng.choice(candidates), JobStatus.COMPLETED)
+        for _ in range(60):
+            start = _local_slot(rng, tz, offset)
+            end = start + timedelta(minutes=past_service.duration_minutes)
+            chosen = schedule.pick(rng, candidates, start, end)
+            if chosen is None:
+                continue
+            past = _add_booking(
+                db,
+                org,
+                customer=demo_customer,
+                vehicle=fleet[0],
+                service=past_service,
+                start=start,
+                status=BookingStatus.CONFIRMED,
+            )
+            _add_job(db, org, past, chosen, JobStatus.COMPLETED)
+            schedule.take(chosen, start, end)
+            break
 
 
 def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[str, int]:
@@ -234,6 +318,8 @@ def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[st
         return {"bookings": 0, "jobs": 0}
 
     tz = ZoneInfo(org.timezone)
+    schedule = Schedule(org.timezone)
+    schedule.load(db, employees)
 
     # The demo accounts get their story first; it counts against the budget below.
     seed_demo_customer_story(
@@ -243,6 +329,7 @@ def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[st
         services=services,
         employees=employees,
         vehicles_by_customer=vehicles_by_customer,
+        schedule=schedule,
     )
 
     already = (
@@ -282,28 +369,45 @@ def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[st
     created_bookings = 0
     created_jobs = 0
 
-    for kind in plan:
+    queue = list(plan)
+    attempts = 0
+    while queue and attempts < BOOKING_COUNT * 12:
+        attempts += 1
+        kind = queue.pop(0)
         customer = rng.choice(owners)
         fleet = vehicles_by_customer.get(customer.id, [])
         if not fleet:
             continue
         vehicle = rng.choice(fleet)
 
+        past = kind.startswith("past")
         needs_employee = kind in ("past_completed", "future_confirmed")
+
+        offset_range = (-PAST_WINDOW_DAYS, -1) if past else (1, FUTURE_WINDOW_DAYS)
+
+        employee = None
         if needs_employee:
-            # Only offer services someone is actually qualified to perform.
+            # Only offer services someone is actually qualified to perform, and
+            # keep retrying slots until one is free and inside working hours.
             options = [s for s in services if _qualified(employees, s)]
             if not options:
                 continue
             service = rng.choice(options)
-            employee = rng.choice(_qualified(employees, service))
+            for _ in range(80):
+                start_at = _local_slot(rng, tz, rng.randint(*offset_range))
+                end_at = start_at + timedelta(minutes=service.duration_minutes)
+                employee = schedule.pick(rng, _qualified(employees, service), start_at, end_at)
+                if employee is not None:
+                    break
+            if employee is None:
+                # Nobody free in that stretch of the calendar. Put the slot back
+                # and try again later rather than downgrading it, so the planned
+                # composition stays exact.
+                queue.append(kind)
+                continue
         else:
             service = rng.choice(services)
-            employee = None
-
-        past = kind.startswith("past")
-        offset = -rng.randint(1, PAST_WINDOW_DAYS) if past else rng.randint(1, FUTURE_WINDOW_DAYS)
-        start_at = _local_slot(rng, tz, offset)
+            start_at = _local_slot(rng, tz, rng.randint(*offset_range))
 
         status = {
             "past_completed": BookingStatus.CONFIRMED,
@@ -333,6 +437,7 @@ def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[st
                 employee,
                 JobStatus.COMPLETED if kind == "past_completed" else JobStatus.ASSIGNED,
             )
+            schedule.take(employee, booking.requested_start, booking.requested_end)
             created_jobs += 1
 
     db.flush()
