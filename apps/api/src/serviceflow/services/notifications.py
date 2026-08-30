@@ -41,10 +41,18 @@ from serviceflow.db.models.job import Job
 from serviceflow.db.models.membership import OrganizationMembership
 from serviceflow.db.models.notification import Notification
 from serviceflow.db.models.organization import Organization
+from serviceflow.services import outbox, realtime
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHANNELS: tuple[NotificationChannel, ...] = (NotificationChannel.IN_APP,)
+# Events the customer should hear about away from the app get an email too.
+# Operational alerts to staff stay in-app: an admin watching a queue does not
+# want a message per booking request.
+WITH_EMAIL: tuple[NotificationChannel, ...] = (
+    NotificationChannel.IN_APP,
+    NotificationChannel.EMAIL,
+)
 
 
 # --------------------------------------------------------------- writing
@@ -76,6 +84,23 @@ def enqueue(
         )
         db.add(notification)
         created.append(notification)
+
+    # Ids are needed to stage the side effects, and the rows must be visible to
+    # the worker before it is told to look - the flush makes both true while
+    # staying inside the caller's transaction.
+    db.flush()
+    for notification in created:
+        if notification.channel is NotificationChannel.EMAIL:
+            outbox.stage_email(db, notification.id)
+        else:
+            outbox.stage_event(
+                db,
+                realtime.notification_created(
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    notification_id=notification.id,
+                ),
+            )
     return created
 
 
@@ -141,6 +166,7 @@ def booking_confirmed(db: Session, booking: Booking, *, employee_name: str) -> N
         organization_id=booking.organization_id,
         user_id=booking.customer.user_id,
         type=NotificationType.BOOKING_CONFIRMED,
+        channels=WITH_EMAIL,
         subject=f"Your {booking.service.name} is confirmed",
         body=f"{employee_name} will take care of it on {when}.",
         payload=_booking_payload(booking),
@@ -154,6 +180,7 @@ def booking_rejected(db: Session, booking: Booking) -> None:
         organization_id=booking.organization_id,
         user_id=booking.customer.user_id,
         type=NotificationType.BOOKING_REJECTED,
+        channels=WITH_EMAIL,
         subject=f"We couldn't take your {booking.service.name} booking",
         body=f"Your request for {when} wasn't accepted. Please try another time.",
         payload=_booking_payload(booking),
@@ -170,6 +197,7 @@ def booking_rescheduled(db: Session, booking: Booking) -> None:
         subject=f"Your {booking.service.name} has moved",
         body=f"It's now scheduled for {when}.",
         payload=_booking_payload(booking),
+        channels=WITH_EMAIL,
     )
     if booking.job is not None:
         enqueue(
@@ -208,6 +236,7 @@ def booking_cancelled(db: Session, booking: Booking, *, cancelled_by_customer: b
             subject=f"Your {service} booking was cancelled",
             body=f"The appointment on {when} is no longer scheduled.",
             payload=_booking_payload(booking),
+            channels=WITH_EMAIL,
         )
 
     if booking.job is not None:
@@ -248,6 +277,7 @@ def job_completed(db: Session, job: Job) -> None:
             "Open the booking to see photos and notes from the visit."
         ),
         payload={"booking_id": str(booking.id), "job_id": str(job.id)},
+        channels=WITH_EMAIL,
     )
 
 
@@ -259,6 +289,7 @@ def appointment_reminder(db: Session, booking: Booking) -> None:
         organization_id=booking.organization_id,
         user_id=booking.customer.user_id,
         type=NotificationType.APPOINTMENT_REMINDER,
+        channels=WITH_EMAIL,
         subject=f"Reminder: {booking.service.name} on {when}",
         body=f"We'll see you and your {booking.vehicle.display_name} then.",
         payload=_booking_payload(booking),

@@ -61,4 +61,8 @@ ignore_missing_imports = true
 pythonpath = ["src", "."]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-markers = ["concurrency: tests that exercise race conditions"]
+markers = [
+    "concurrency: tests that exercise race conditions",
+    "celery: tests that need a real Celery worker and Redis broker",
+]
+asyncio_mode = "auto"

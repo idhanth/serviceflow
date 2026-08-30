@@ -29,8 +29,20 @@ os.environ.setdefault("S3_REGION", "us-east-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "serviceflow")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "serviceflow-dev-secret")
 
+# Celery: the default suite queues onto an in-memory transport so no test pays
+# for a broker round trip. The tasks themselves are exercised by calling them
+# directly, and tests/test_celery_integration.py runs a real worker against real
+# Redis to prove the wiring.
+os.environ.setdefault("SERVICEFLOW_BROKER_URL", "memory://")
+os.environ.setdefault("SERVICEFLOW_RESULT_BACKEND", "cache+memory://")
+# Email goes to the local MailPit, which is a real SMTP server.
+os.environ.setdefault("EMAIL_PROVIDER", "smtp")
+os.environ.setdefault("SMTP_HOST", "127.0.0.1")
+os.environ.setdefault("SMTP_PORT", "1025")
+
 import pathlib  # noqa: E402
 
+import httpx  # noqa: E402
 import psycopg  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
@@ -56,6 +68,7 @@ from serviceflow.db.models.enums import (  # noqa: E402
 from serviceflow.db.models.job import Job  # noqa: E402
 from serviceflow.db.models.job_note import JobNote  # noqa: E402
 from serviceflow.db.models.membership import OrganizationMembership  # noqa: E402
+from serviceflow.db.models.notification import Notification  # noqa: E402
 from serviceflow.db.models.organization import Organization  # noqa: E402
 from serviceflow.db.models.service import Service  # noqa: E402
 from serviceflow.db.models.user import User  # noqa: E402
@@ -486,3 +499,66 @@ def job_with_parties(db: Session, organization: Organization) -> dict:
     )
     job = make_job(db, organization, booking, setup["employee"])
     return {**setup, "booking": booking, "job": job}
+
+
+# ---------------------------------------------------------------- phase 6 helpers
+
+MAILPIT_API = "http://127.0.0.1:8025/api/v1"
+
+
+def mailpit_clear() -> None:
+    """Empty the capture mailbox so a test can assert on exactly what it sent."""
+    httpx.delete(f"{MAILPIT_API}/messages", timeout=5)
+
+
+def mailpit_messages() -> list[dict]:
+    response = httpx.get(f"{MAILPIT_API}/messages?limit=50", timeout=5)
+    response.raise_for_status()
+    return list(response.json()["messages"])
+
+
+def mailpit_body(message_id: str) -> str:
+    response = httpx.get(f"{MAILPIT_API}/message/{message_id}", timeout=5)
+    response.raise_for_status()
+    payload = response.json()
+    return f"{payload.get('Text', '')}\n{payload.get('HTML', '')}"
+
+
+@pytest.fixture()
+def mailbox() -> Iterator[None]:
+    """A clean MailPit mailbox around each email test."""
+    mailpit_clear()
+    yield
+    mailpit_clear()
+
+
+class RecordingProvider:
+    """A provider that records instead of sending, for failure-path tests."""
+
+    name = "recording"
+
+    def __init__(self, *, fail_times: int = 0, permanent: bool = False) -> None:
+        self.sent: list[object] = []
+        self.attempts = 0
+        self._fail_times = fail_times
+        self._permanent = permanent
+
+    def send(self, message: object) -> str:
+        from serviceflow.services.email import EmailDeliveryError
+
+        self.attempts += 1
+        if self.attempts <= self._fail_times:
+            raise EmailDeliveryError("provider unavailable", permanent=self._permanent)
+        self.sent.append(message)
+        return f"recorded-{self.attempts}"
+
+
+def email_rows(db: Session, **filters) -> list[Notification]:  # type: ignore[no-untyped-def]
+    from serviceflow.db.models.enums import NotificationChannel
+
+    return (
+        db.query(Notification)
+        .filter_by(channel=NotificationChannel.EMAIL, **filters)
+        .order_by(Notification.created_at)
+        .all()
+    )

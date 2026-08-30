@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRealtimeStatus } from "@/components/providers/realtime-provider";
+import { fallbackInterval } from "@/hooks/use-realtime";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { formatRelative } from "@/lib/format";
 import { queryKeys } from "@/lib/query-keys";
@@ -25,14 +27,17 @@ const LIST_PARAMS = { page: 1, page_size: 15 };
 
 export function NotificationBell() {
   const queryClient = useQueryClient();
+  const status = useRealtimeStatus();
   const [open, setOpen] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
 
   const unread = useQuery<{ data: { unread: number } }, ApiError>({
     queryKey: queryKeys.notifications.unread,
     queryFn: () => apiFetch<{ data: { unread: number } }>("notifications/unread-count"),
-    // Polled, not pushed: realtime arrives in phase 6.
-    refetchInterval: 60_000,
+    // Realtime invalidates this the moment a notification is created. The
+    // interval is only a floor for when the stream is down, so it is slow when
+    // live and brisk when it is not.
+    refetchInterval: fallbackInterval(status),
   });
 
   const list = useQuery<Paged<AppNotification>, ApiError>({

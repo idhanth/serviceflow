@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         env_file=(".env", "../../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     environment: Literal["local", "test", "staging", "production"] = "local"
@@ -55,6 +56,33 @@ class Settings(BaseSettings):
     s3_upload_ttl_seconds: int = 300
     s3_download_ttl_seconds: int = 900
 
+    # ---- Email --------------------------------------------------------
+    # "smtp" is the development transport (MailPit); "resend" is the production
+    # provider. Business logic never sees the difference.
+    email_provider: Literal["smtp", "resend"] = "smtp"
+    email_from: str = "ServiceFlow <hello@serviceflow.demo>"
+    smtp_host: str = "127.0.0.1"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = False
+    resend_api_key: str | None = None
+    email_timeout_seconds: int = 10
+
+    # ---- Celery -------------------------------------------------------
+    # Deliberately *not* named CELERY_BROKER_URL: Celery reads that name from the
+    # environment itself and would then override any app constructed with an
+    # explicit broker, which silently reconfigures every app in the process.
+    celery_broker_url: str | None = Field(default=None, alias="SERVICEFLOW_BROKER_URL")
+    celery_result_backend: str | None = Field(default=None, alias="SERVICEFLOW_RESULT_BACKEND")
+    email_max_retries: int = 5
+    # How long before an appointment the reminder goes out.
+    reminder_lead_hours: int = 24
+    reminder_window_minutes: int = 90
+
+    # ---- Realtime -----------------------------------------------------
+    sse_keepalive_seconds: int = 20
+
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
@@ -63,6 +91,14 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @property
+    def broker_url(self) -> str:
+        return self.celery_broker_url or str(self.redis_url)
+
+    @property
+    def result_backend(self) -> str:
+        return self.celery_result_backend or str(self.redis_url)
 
     @property
     def is_production(self) -> bool:

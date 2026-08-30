@@ -17,6 +17,7 @@ Redis 6380), so `.env` works unchanged with either.
 | PostgreSQL | 16.15 | micromamba env `serviceflow` |
 | Redis | 8.10.1 | micromamba env `serviceflow` |
 | MinIO | RELEASE.2025-09-07 | `~/.local/opt/minio` (S3-compatible object storage) |
+| MailPit | 1.31.0 | `~/.local/opt/mailpit` (SMTP capture, mailbox at :8025) |
 
 `source scripts/env.sh` puts all of it on `PATH`.
 
@@ -24,7 +25,7 @@ Redis 6380), so `.env` works unchanged with either.
 
 ```bash
 source scripts/env.sh
-./scripts/services.sh start          # Postgres + Redis + MinIO
+./scripts/services.sh start          # Postgres + Redis + MinIO + MailPit
 
 cd apps/api
 uv run alembic upgrade head          # migrations
@@ -33,10 +34,33 @@ uv run uvicorn serviceflow.main:app --port 8000 --reload
 
 cd ../web
 npm run dev                          # http://localhost:3000
+
+# background jobs and the reminder scheduler, in another shell
+cd ../.. && ./scripts/worker.sh
 ```
 
 `./scripts/services.sh stop` shuts the services down; `reset` wipes the data
 directory and starts fresh.
+
+## Email
+
+MailPit is a real SMTP server; the application delivers to it exactly as it would
+to a production provider. Everything sent is readable at
+<http://localhost:8025>, and the tests assert against its API rather than
+stubbing the transport.
+
+To use a real provider instead, set `EMAIL_PROVIDER=resend` and `RESEND_API_KEY`.
+No application code changes.
+
+## Background jobs
+
+```bash
+./scripts/worker.sh        # worker + beat
+```
+
+The beat schedule sweeps undelivered email every 60s and creates appointment
+reminders every 5 minutes. Both are idempotent, so running several workers is
+safe. See [ADR 0006](adr-0006-async-infrastructure-and-realtime.md).
 
 ## Object storage
 

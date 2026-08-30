@@ -4,11 +4,10 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 5 of 10 complete** — the workflow runs end to end with a real
-schedule behind it, and now carries its product surface: before/after photos
-uploaded straight to S3-compatible storage through presigned URLs, internal and
-customer-visible notes, search across every record type, and in-app
-notifications. See [Roadmap](#roadmap).
+**Status: Phase 6 of 10 complete** — the product surface now sits on real
+infrastructure: Celery workers deliver email off the request path, appointment
+reminders run on a schedule, and Server-Sent Events push booking and job changes
+to connected clients without polling. See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -17,7 +16,8 @@ notifications. See [Roadmap](#roadmap).
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind 4, shadcn/ui (Base UI), TanStack Query |
 | Backend | FastAPI, SQLAlchemy 2, Alembic, Pydantic v2 |
 | Database | PostgreSQL 16 |
-| Cache / queue | Redis (Celery lands in Phase 6) |
+| Cache / queue | Redis — Celery broker and realtime pub/sub |
+| Email | Provider-agnostic — MailPit over SMTP locally, Resend in production |
 | Object storage | S3-compatible — MinIO locally, AWS S3 in production |
 | Auth | Pluggable - local tokens by default, Clerk by configuration ([ADR 0001](docs/adr-0001-authentication-provider.md)) |
 
@@ -25,7 +25,7 @@ notifications. See [Roadmap](#roadmap).
 
 ```bash
 source scripts/env.sh
-./scripts/services.sh start          # PostgreSQL, Redis and MinIO
+./scripts/services.sh start          # PostgreSQL, Redis, MinIO and MailPit
 
 cd apps/api
 cp ../../.env.example ../../.env     # then set DATABASE_URL user + JWT_SECRET
@@ -36,7 +36,12 @@ uv run uvicorn serviceflow.main:app --port 8000
 
 # in a second shell
 cd apps/web && npm install && npm run dev
+
+# in a third shell — background jobs and the reminder scheduler
+./scripts/worker.sh
 ```
+
+Captured email is readable at http://localhost:8025.
 
 Open http://localhost:3000.
 
@@ -68,6 +73,12 @@ history for the demo customer.
 
 ```
 Next.js  ->  route handlers (/api/proxy)  ->  FastAPI  ->  service layer  ->  PostgreSQL
+                                                              |
+                                                    notifications (outbox)
+                                                        |            |
+                                             Celery worker      Redis pub/sub
+                                                  |                  |
+                                            email provider    SSE -> browser
 ```
 
 Three decisions worth knowing up front:
@@ -88,6 +99,15 @@ Three decisions worth knowing up front:
   application does, and a per-employee advisory lock turns the race into a clean
   409 instead of a constraint violation
   ([ADR 0004](docs/adr-0004-scheduling-concurrency.md)).
+- **Emails are an outbox, not a side effect.** Notification rows are written
+  inside the business transaction and dispatched only after it commits, so a
+  rolled-back booking can never send mail — and a broker outage right after the
+  commit is recovered by a periodic sweep rather than losing the message.
+  Delivery is at-least-once, deliberately, and the duplicate window is documented
+  ([ADR 0006](docs/adr-0006-async-infrastructure-and-realtime.md)).
+- **Realtime events carry no record content.** An SSE envelope names what changed
+  and who may know; the client refetches. A dropped event is therefore harmless,
+  and a reconnecting client is correct again without replaying anything.
 - **Photo bytes never pass through the API, and the bucket is never public.**
   The browser uploads to a presigned POST whose signed policy pins the content
   type and a 10 MB ceiling; the API then verifies the stored object before
@@ -98,11 +118,13 @@ Three decisions worth knowing up front:
 ## Testing
 
 ```bash
-cd apps/api && uv run pytest        # 342 tests
+cd apps/api && uv run pytest        # 393 tests
 ```
 
-Photo tests upload to the local MinIO for real — presigned POST, actual bytes,
-verified round-trip — so `./scripts/services.sh start` has to be running.
+Infrastructure is exercised, not mocked: photo tests upload to MinIO for real,
+email tests deliver over SMTP to MailPit and assert against its mailbox, realtime
+tests publish through Redis, and one test runs an actual Celery worker as a
+separate process. `./scripts/services.sh start` has to be running.
 
 The schema under test is built by running the real migrations, not
 `metadata.create_all` — the scheduling guarantee is a database constraint, so a
@@ -135,8 +157,8 @@ reschedule.
 | 3 | Booking workflow, assignment, job lifecycle | done |
 | 4 | Availability, conflict detection, transaction safety, calendar | done |
 | 5 | Photos, notes, search, filtering, notifications | done |
-| 6 | Redis, Celery, email, realtime | next |
-| 7 | Idempotency, audit logs, rate limiting | |
+| 6 | Redis, Celery, email, realtime | done |
+| 7 | Idempotency, audit logs, rate limiting | next |
 | 8 | Integration, E2E, concurrency and load tests | |
 | 9 | UI polish, responsive, dark mode | |
 | 10 | CI/CD, production infrastructure, monitoring | |

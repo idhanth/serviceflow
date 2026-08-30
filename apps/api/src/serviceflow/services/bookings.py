@@ -36,7 +36,7 @@ from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
-from serviceflow.services import notifications
+from serviceflow.services import notifications, outbox, realtime
 from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.customers import get_customer, get_customer_for_user
 from serviceflow.services.recommendations import EmployeeRecommendation, recommend_employees
@@ -358,6 +358,15 @@ def create_booking(
     db.flush()
     # Staged on the same transaction: if the insert fails, nobody is told.
     notifications.booking_created(db, booking)
+    outbox.stage_event(
+        db,
+        realtime.booking_updated(
+            organization_id=organization_id,
+            booking_id=booking.id,
+            customer_user_id=booking.customer.user_id,
+            employee_user_id=booking.job.employee.user_id if booking.job else None,
+        ),
+    )
     db.commit()
     db.refresh(booking)
     logger.info(
@@ -461,6 +470,15 @@ def confirm_booking(
         )
         db.flush()
         notifications.booking_confirmed(db, booking, employee_name=employee.user.full_name)
+        outbox.stage_event(
+            db,
+            realtime.booking_updated(
+                organization_id=organization_id,
+                booking_id=booking.id,
+                customer_user_id=booking.customer.user_id,
+                employee_user_id=employee.user_id,
+            ),
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -500,6 +518,15 @@ def reject_booking(
     if admin_notes is not None:
         booking.admin_notes = admin_notes
     notifications.booking_rejected(db, booking)
+    outbox.stage_event(
+        db,
+        realtime.booking_updated(
+            organization_id=organization_id,
+            booking_id=booking.id,
+            customer_user_id=booking.customer.user_id,
+            employee_user_id=booking.job.employee.user_id if booking.job else None,
+        ),
+    )
     db.commit()
     db.refresh(booking)
     return booking
@@ -594,6 +621,15 @@ def reschedule_booking(
                 "Work on this booking has already started, so it can't be moved."
             )
         notifications.booking_rescheduled(db, booking)
+        outbox.stage_event(
+            db,
+            realtime.booking_updated(
+                organization_id=organization_id,
+                booking_id=booking.id,
+                customer_user_id=booking.customer.user_id,
+                employee_user_id=booking.job.employee.user_id if booking.job else None,
+            ),
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()

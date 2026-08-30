@@ -30,7 +30,7 @@ from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
-from serviceflow.services import notifications
+from serviceflow.services import notifications, outbox, realtime
 from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.employees import get_employee_for_user
 from serviceflow.services.scheduling import AssignmentRequest, get_scheduling_policy
@@ -299,6 +299,16 @@ def start_job(
     transition_job(job, JobStatus.IN_PROGRESS)
     job.started_at = datetime.now(UTC)
     notifications.job_started(db, _with_relations(db, organization_id, job_id))
+    loaded = _with_relations(db, organization_id, job_id)
+    outbox.stage_event(
+        db,
+        realtime.job_updated(
+            organization_id=organization_id,
+            job_id=job_id,
+            customer_user_id=loaded.booking.customer.user_id,
+            employee_user_id=loaded.employee.user_id,
+        ),
+    )
     db.commit()
     logger.info("job started", extra={"job_id": str(job_id)})
     return _reload(db, organization_id, job_id)
@@ -319,6 +329,16 @@ def complete_job(
     if internal_notes is not None:
         job.internal_notes = internal_notes
     notifications.job_completed(db, _with_relations(db, organization_id, job_id))
+    loaded = _with_relations(db, organization_id, job_id)
+    outbox.stage_event(
+        db,
+        realtime.job_updated(
+            organization_id=organization_id,
+            job_id=job_id,
+            customer_user_id=loaded.booking.customer.user_id,
+            employee_user_id=loaded.employee.user_id,
+        ),
+    )
     db.commit()
     logger.info("job completed", extra={"job_id": str(job_id)})
     return _reload(db, organization_id, job_id)
@@ -335,6 +355,16 @@ def cancel_job(
     """Admin-only cancellation of assigned work. Started work cannot be cancelled."""
     job = get_job(db, organization_id, job_id, roles=roles, user_id=user_id, for_update=True)
     transition_job(job, JobStatus.CANCELLED)
+    loaded = _with_relations(db, organization_id, job_id)
+    outbox.stage_event(
+        db,
+        realtime.job_updated(
+            organization_id=organization_id,
+            job_id=job_id,
+            customer_user_id=loaded.booking.customer.user_id,
+            employee_user_id=loaded.employee.user_id,
+        ),
+    )
     db.commit()
     logger.info("job cancelled", extra={"job_id": str(job_id)})
     return _reload(db, organization_id, job_id)
@@ -383,6 +413,17 @@ def reassign_job(
             ),
         )
         job.employee_id = employee.id
+        db.flush()
+        reassigned = _with_relations(db, organization_id, job_id)
+        outbox.stage_event(
+            db,
+            realtime.job_updated(
+                organization_id=organization_id,
+                job_id=job_id,
+                customer_user_id=reassigned.booking.customer.user_id,
+                employee_user_id=reassigned.employee.user_id,
+            ),
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()

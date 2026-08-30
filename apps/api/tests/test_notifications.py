@@ -89,15 +89,21 @@ def test_confirming_notifies_the_customer_with_the_technician(
         json={"employee_id": str(setup["employee"].id)},
     )
 
-    row = (
+    rows = (
         db.query(Notification)
         .filter_by(user_id=setup["customer_user"].id, type=NotificationType.BOOKING_CONFIRMED)
-        .one()
+        .all()
     )
-    assert setup["employee"].user.full_name in row.body
-    assert row.payload["booking_id"] == str(booking.id)
-    assert row.channel is NotificationChannel.IN_APP
-    assert row.status is NotificationStatus.PENDING
+    # A customer-facing event lands on both channels: in-app for the badge,
+    # email for the outbox the worker drains.
+    assert {row.channel for row in rows} == {
+        NotificationChannel.IN_APP,
+        NotificationChannel.EMAIL,
+    }
+    for row in rows:
+        assert setup["employee"].user.full_name in row.body
+        assert row.payload["booking_id"] == str(booking.id)
+        assert row.status is NotificationStatus.PENDING
 
 
 def test_rejecting_notifies_the_customer(
@@ -182,10 +188,25 @@ def test_starting_and_completing_a_job_notify_the_customer(
 
     completed = (
         db.query(Notification)
-        .filter_by(user_id=parties["customer_user"].id, type=NotificationType.JOB_COMPLETED)
+        .filter_by(
+            user_id=parties["customer_user"].id,
+            type=NotificationType.JOB_COMPLETED,
+            channel=NotificationChannel.IN_APP,
+        )
         .one()
     )
     assert parties["booking"].vehicle.display_name in completed.body
+    # ...and an email row exists alongside it for the worker.
+    assert (
+        db.query(Notification)
+        .filter_by(
+            user_id=parties["customer_user"].id,
+            type=NotificationType.JOB_COMPLETED,
+            channel=NotificationChannel.EMAIL,
+        )
+        .count()
+        == 1
+    )
 
 
 def test_a_failed_confirmation_leaves_no_notification(

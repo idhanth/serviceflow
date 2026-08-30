@@ -22,6 +22,20 @@ def _time(value: str) -> dt.time:
     return dt.time(int(hour), int(minute))
 
 
+def employee_with_no_overrides(db: Session, employee: Employee | None) -> Employee | None:
+    """Skip anyone who already has overrides.
+
+    The specs are offsets from *today*, so re-seeding on a later day would
+    otherwise pile up new dates alongside the old ones.
+    """
+    if employee is None:
+        return None
+    existing = db.scalar(
+        select(AvailabilityOverride.id).where(AvailabilityOverride.employee_id == employee.id)
+    )
+    return None if existing is not None else employee
+
+
 def seed_availability(db: Session, org: Organization) -> dict[str, int]:
     """Idempotent: keyed on (employee, weekday, start) and (employee, date)."""
     employees = {
@@ -59,7 +73,7 @@ def seed_availability(db: Session, org: Organization) -> dict[str, int]:
     today = dt.datetime.now(ZoneInfo(org.timezone)).date()
     overrides = 0
     for email, specs in OVERRIDE_SPECS.items():
-        employee = employees.get(email)
+        employee = employee_with_no_overrides(db, employees.get(email))
         if employee is None:
             continue
         for offset, available, start, end, reason in specs:

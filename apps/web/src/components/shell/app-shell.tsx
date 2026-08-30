@@ -3,6 +3,8 @@
 import { Menu } from "lucide-react";
 import { useState } from "react";
 
+import { RealtimeProvider } from "@/components/providers/realtime-provider";
+import { ConnectionStatus } from "@/components/shell/connection-status";
 import { GlobalSearch } from "@/components/shell/global-search";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { SidebarNav } from "@/components/shell/sidebar";
@@ -37,6 +39,7 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
   const primaryRole = roles.includes("ADMIN") ? "ADMIN" : (roles[0] ?? "CUSTOMER");
 
   return (
+    <RealtimeProvider>
     <div className="min-h-svh bg-muted/30">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r bg-background lg:flex">
@@ -54,7 +57,8 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
 
       <div className="lg:pl-64">
         {/* Desktop utility bar: notifications live here for every role. */}
-        <div className="sticky top-0 z-20 hidden justify-end border-b bg-background/95 px-8 py-2 backdrop-blur lg:flex">
+        <div className="sticky top-0 z-20 hidden items-center justify-end gap-3 border-b bg-background/95 px-8 py-2 backdrop-blur lg:flex">
+          <ConnectionStatus />
           <NotificationBell />
         </div>
 
@@ -80,6 +84,7 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
             </SheetContent>
           </Sheet>
           <span className="flex-1 truncate text-sm font-semibold">{organization.name}</span>
+          <ConnectionStatus />
           <NotificationBell />
         </header>
 
@@ -88,5 +93,6 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
         </main>
       </div>
     </div>
+    </RealtimeProvider>
   );
 }

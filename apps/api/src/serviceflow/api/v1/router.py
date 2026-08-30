@@ -9,6 +9,7 @@ from serviceflow.api.v1 import (
     calendar,
     customers,
     employees,
+    events,
     job_content,
     jobs,
     notifications,
@@ -32,3 +33,4 @@ api_router.include_router(job_content.router)
 api_router.include_router(notifications.router)
 api_router.include_router(search.router)
 api_router.include_router(calendar.router)
+api_router.include_router(events.router)
