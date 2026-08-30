@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import ColumnExpressionArgument, func, or_, select
+from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload
 
 from serviceflow.core.errors import Forbidden, NotFound
-from serviceflow.core.pagination import Page, PageParams
+from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.enums import Role
 from serviceflow.db.models.vehicle import Vehicle
@@ -53,6 +54,7 @@ def list_vehicles(
     pagination: PageParams,
     q: str | None = None,
     customer_id: uuid.UUID | None = None,
+    sort: SortSpec | None = None,
 ) -> Page[Vehicle]:
     scope = _customer_filter(
         db, organization_id, roles=roles, user_id=user_id, customer_id=customer_id
@@ -78,12 +80,28 @@ def list_vehicles(
             select(Vehicle)
             .where(*filters)
             .options(joinedload(Vehicle.customer).joinedload(Customer.user))
-            .order_by(Vehicle.created_at.desc())
+            .order_by(*_vehicle_order(sort))
             .offset(pagination.offset)
             .limit(pagination.page_size)
         ).unique()
     )
     return Page(items=items, total=total)
+
+
+VEHICLE_SORTS = frozenset({"created_at", "make", "year"})
+
+
+def _vehicle_order(sort: SortSpec | None) -> list[ColumnExpressionArgument[Any]]:
+    key = sort.key if sort else "-created_at"
+    descending = sort.descending if sort else True
+    options: dict[str, list[InstrumentedAttribute[Any]]] = {
+        "created_at": [Vehicle.created_at],
+        "make": [Vehicle.make, Vehicle.model],
+        "year": [Vehicle.year],
+    }
+    columns = options.get(key, [Vehicle.created_at])
+    ordered = [c.desc() if descending else c.asc() for c in columns]
+    return [*ordered, Vehicle.id.asc()]
 
 
 def get_vehicle(

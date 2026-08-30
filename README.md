@@ -4,10 +4,11 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 4 of 10 complete** — the core workflow runs end to end, and the
-schedule behind it is real: employees have working hours and time off, the admin
-sees qualified technicians ranked by who is actually free, and the database
-itself refuses to double-book anyone. See [Roadmap](#roadmap).
+**Status: Phase 5 of 10 complete** — the workflow runs end to end with a real
+schedule behind it, and now carries its product surface: before/after photos
+uploaded straight to S3-compatible storage through presigned URLs, internal and
+customer-visible notes, search across every record type, and in-app
+notifications. See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -17,13 +18,14 @@ itself refuses to double-book anyone. See [Roadmap](#roadmap).
 | Backend | FastAPI, SQLAlchemy 2, Alembic, Pydantic v2 |
 | Database | PostgreSQL 16 |
 | Cache / queue | Redis (Celery lands in Phase 6) |
+| Object storage | S3-compatible — MinIO locally, AWS S3 in production |
 | Auth | Pluggable - local tokens by default, Clerk by configuration ([ADR 0001](docs/adr-0001-authentication-provider.md)) |
 
 ## Quick start
 
 ```bash
 source scripts/env.sh
-./scripts/services.sh start
+./scripts/services.sh start          # PostgreSQL, Redis and MinIO
 
 cd apps/api
 cp ../../.env.example ../../.env     # then set DATABASE_URL user + JWT_SECRET
@@ -58,7 +60,9 @@ The seed creates the organization's catalog and book of business: 6 services,
 5 employees (each with their own weekly schedule and some time off), 75 customers,
 100 vehicles, 250 bookings and 199 jobs (180 of them completed), per PRD 49. It is
 deterministic and idempotent — rerunning it changes nothing — and it schedules
-around working hours, so no seeded job overlaps another.
+around working hours, so no seeded job overlaps another. It also adds 68 job
+notes, 24 photos (uploaded to object storage for real) and a short notification
+history for the demo customer.
 
 ## Architecture
 
@@ -84,12 +88,21 @@ Three decisions worth knowing up front:
   application does, and a per-employee advisory lock turns the race into a clean
   409 instead of a constraint violation
   ([ADR 0004](docs/adr-0004-scheduling-concurrency.md)).
+- **Photo bytes never pass through the API, and the bucket is never public.**
+  The browser uploads to a presigned POST whose signed policy pins the content
+  type and a 10 MB ceiling; the API then verifies the stored object before
+  writing any metadata, so a `JobPhoto` row cannot describe a file that was not
+  uploaded. Reads are short-lived presigned GETs
+  ([ADR 0005](docs/adr-0005-object-storage-and-notifications.md)).
 
 ## Testing
 
 ```bash
-cd apps/api && uv run pytest        # 259 tests
+cd apps/api && uv run pytest        # 342 tests
 ```
+
+Photo tests upload to the local MinIO for real — presigned POST, actual bytes,
+verified round-trip — so `./scripts/services.sh start` has to be running.
 
 The schema under test is built by running the real migrations, not
 `metadata.create_all` — the scheduling guarantee is a database constraint, so a
@@ -121,8 +134,8 @@ reschedule.
 | 2 | Customers, employees, services, vehicles | done |
 | 3 | Booking workflow, assignment, job lifecycle | done |
 | 4 | Availability, conflict detection, transaction safety, calendar | done |
-| 5 | Photos, notes, search, filtering, notifications | next |
-| 6 | Redis, Celery, email, realtime | |
+| 5 | Photos, notes, search, filtering, notifications | done |
+| 6 | Redis, Celery, email, realtime | next |
 | 7 | Idempotency, audit logs, rate limiting | |
 | 8 | Integration, E2E, concurrency and load tests | |
 | 9 | UI polish, responsive, dark mode | |

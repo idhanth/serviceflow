@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import uuid
 from collections.abc import Iterator
@@ -19,6 +20,14 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["ENVIRONMENT"] = "test"
 os.environ.setdefault("JWT_SECRET", "test-secret-that-is-definitely-long-enough-123")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6380/1")
+
+# Object storage: a separate bucket on the same local MinIO the dev stack uses,
+# so upload tests exercise a real S3 API rather than a stub.
+os.environ.setdefault("S3_BUCKET", "serviceflow-test-media")
+os.environ.setdefault("S3_ENDPOINT_URL", "http://127.0.0.1:9000")
+os.environ.setdefault("S3_REGION", "us-east-1")
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "serviceflow")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "serviceflow-dev-secret")
 
 import pathlib  # noqa: E402
 
@@ -41,9 +50,11 @@ from serviceflow.db.models.enums import (  # noqa: E402
     BookingStatus,
     JobStatus,
     MembershipStatus,
+    NoteVisibility,
     Role,
 )
 from serviceflow.db.models.job import Job  # noqa: E402
+from serviceflow.db.models.job_note import JobNote  # noqa: E402
 from serviceflow.db.models.membership import OrganizationMembership  # noqa: E402
 from serviceflow.db.models.organization import Organization  # noqa: E402
 from serviceflow.db.models.service import Service  # noqa: E402
@@ -51,6 +62,10 @@ from serviceflow.db.models.user import User  # noqa: E402
 from serviceflow.db.models.vehicle import Vehicle  # noqa: E402
 from serviceflow.db.session import get_session_factory, reset_engine  # noqa: E402
 from serviceflow.main import create_app  # noqa: E402
+from serviceflow.services.storage import (  # noqa: E402
+    get_object_storage,
+    reset_object_storage,
+)
 
 TEST_PASSWORD = "test-password-123"
 
@@ -90,6 +105,14 @@ def _database() -> Iterator[None]:
     reset_engine()
     yield
     reset_engine()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _bucket() -> Iterator[None]:
+    """Make sure the test bucket exists before any upload test runs."""
+    reset_object_storage()
+    get_object_storage().ensure_bucket()
+    yield
 
 
 @pytest.fixture()
@@ -392,7 +415,9 @@ def booking_setup(db: Session, organization: Organization) -> dict:
     organizations calls this twice.
     """
     tag = uuid.uuid4().hex[:8]
-    service = make_service(db, organization, name="Full Detail", duration_minutes=150)
+    # The service name is unique per organization, so it is tagged too - a test
+    # that builds two jobs in one org calls this twice.
+    service = make_service(db, organization, name=f"Full Detail {tag}", duration_minutes=150)
     customer = make_customer(
         db, organization, email=f"booker-{tag}@example.com", first_name="Booker"
     )
@@ -410,3 +435,54 @@ def booking_setup(db: Session, organization: Organization) -> dict:
         "employee": employee,
         "employee_user": employee_user,
     }
+
+
+# ---------------------------------------------------------------- phase 5 helpers
+
+# The smallest real files of each type, so upload tests move actual bytes with
+# correct magic numbers rather than arbitrary padding.
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+JPEG_1PX = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+    "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA"
+    "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+)
+WEBP_1PX = base64.b64decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+
+
+def make_job_note(
+    db: Session,
+    organization: Organization,
+    job: Job,
+    author: User,
+    *,
+    content: str = "A note",
+    visibility: NoteVisibility = NoteVisibility.INTERNAL,
+) -> JobNote:
+    note = JobNote(
+        organization_id=organization.id,
+        job_id=job.id,
+        author_id=author.id,
+        content=content,
+        visibility=visibility,
+    )
+    db.add(note)
+    db.commit()
+    return note
+
+
+def job_with_parties(db: Session, organization: Organization) -> dict:
+    """A confirmed job plus every principal who has a stake in it."""
+    setup = booking_setup(db, organization)
+    booking = make_booking(
+        db,
+        organization,
+        setup["customer"],
+        setup["vehicle"],
+        setup["service"],
+        status=BookingStatus.CONFIRMED,
+    )
+    job = make_job(db, organization, booking, setup["employee"])
+    return {**setup, "booking": booking, "job": job}

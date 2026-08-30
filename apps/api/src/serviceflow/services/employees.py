@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import ColumnExpressionArgument, func, or_, select
+from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload, selectinload
 
 from serviceflow.core.errors import NotFound, ValidationFailed
-from serviceflow.core.pagination import Page, PageParams
+from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import Role
 from serviceflow.db.models.service import Service
@@ -29,6 +30,7 @@ def list_employees(
     q: str | None = None,
     active: bool | None = None,
     service_id: uuid.UUID | None = None,
+    sort: SortSpec | None = None,
 ) -> Page[Employee]:
     filters = [Employee.organization_id == organization_id]
     if active is not None:
@@ -54,12 +56,29 @@ def list_employees(
             .join(User)
             .where(*filters)
             .options(joinedload(Employee.user), selectinload(Employee.services))
-            .order_by(Employee.active.desc(), User.first_name, User.last_name)
+            .order_by(*_employee_order(sort))
             .offset(pagination.offset)
             .limit(pagination.page_size)
         ).unique()
     )
     return Page(items=items, total=total)
+
+
+EMPLOYEE_SORTS = frozenset({"name", "job_title", "created_at"})
+
+
+def _employee_order(sort: SortSpec | None) -> list[ColumnExpressionArgument[Any]]:
+    key = sort.key if sort else "name"
+    descending = sort.descending if sort else False
+    options: dict[str, list[InstrumentedAttribute[Any]]] = {
+        "name": [User.first_name, User.last_name],
+        "job_title": [Employee.job_title],
+        "created_at": [Employee.created_at],
+    }
+    columns = options.get(key, [User.first_name, User.last_name])
+    ordered = [c.desc() if descending else c.asc() for c in columns]
+    # Active first regardless, then the chosen sort, then a unique tiebreak.
+    return [Employee.active.desc(), *ordered, Employee.id.asc()]
 
 
 def get_employee(db: Session, organization_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:

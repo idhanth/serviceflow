@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { JobStatusBadge } from "@/components/data/status-badge";
+import { NotesPanel } from "@/components/jobs/notes-panel";
+import { PhotoGallery } from "@/components/jobs/photo-gallery";
 import { ErrorState } from "@/components/data/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -157,15 +159,15 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
           <Separator />
 
           <section className="space-y-2">
-            <Label htmlFor="internal-notes">Internal notes</Label>
+            <Label htmlFor="completion-summary">Completion summary</Label>
             <Textarea
-              id="internal-notes"
-              rows={4}
+              id="completion-summary"
+              rows={3}
               maxLength={2000}
               value={notes}
               disabled={job.status === "COMPLETED" || job.status === "CANCELLED"}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="Saved when you complete the job. The customer never sees this."
+              placeholder="Saved against the job when you mark it complete. The customer never sees this."
             />
           </section>
         </Card>
@@ -260,6 +262,14 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
           ) : null}
         </Card>
       </div>
+
+      <PhotoGallery
+        jobId={job.id}
+        canEdit={job.status === "ASSIGNED" || job.status === "IN_PROGRESS"}
+        canDelete={job.status === "ASSIGNED" || job.status === "IN_PROGRESS"}
+      />
+
+      <NotesPanel jobId={job.id} canWrite canDelete />
     </div>
   );
 }

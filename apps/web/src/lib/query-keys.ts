@@ -38,5 +38,16 @@ export const queryKeys = {
     all: ["jobs"] as const,
     list: (params: Record<string, unknown>) => ["jobs", "list", params] as const,
     detail: (id: string) => ["jobs", "detail", id] as const,
+    notes: (id: string) => ["jobs", "notes", id] as const,
+    photos: (id: string) => ["jobs", "photos", id] as const,
+  },
+  notifications: {
+    all: ["notifications"] as const,
+    list: (params: Record<string, unknown>) => ["notifications", "list", params] as const,
+    unread: ["notifications", "unread"] as const,
+  },
+  search: {
+    all: ["search"] as const,
+    query: (term: string) => ["search", term] as const,
   },
 } as const;

@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
-from serviceflow.core.pagination import Pagination
+from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.schemas.customer import CustomerCreate, CustomerRead, CustomerUpdate
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
 from serviceflow.services import customers as customers_service
@@ -26,9 +26,14 @@ def list_customers(
     db: DbSession,
     pagination: Pagination,
     q: Annotated[str | None, Query(max_length=120, description="Name, email or phone")] = None,
+    sort: Annotated[str | None, Query(description="name | created_at, prefix - to reverse")] = None,
 ) -> PagedResponse[CustomerRead]:
     page = customers_service.list_customers(
-        db, current_user.organization_id, pagination=pagination, q=q
+        db,
+        current_user.organization_id,
+        pagination=pagination,
+        q=q,
+        sort=parse_sort(sort, allowed=customers_service.CUSTOMER_SORTS, default="name"),
     )
     counts = customers_service.count_vehicles(
         db, current_user.organization_id, [customer.id for customer in page.items]

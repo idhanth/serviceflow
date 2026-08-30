@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from serviceflow.api.deps import ActiveUser, DbSession
-from serviceflow.core.pagination import Pagination
+from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.db.models.enums import Role
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
 from serviceflow.schemas.vehicle import VehicleCreate, VehicleRead, VehicleUpdate
@@ -30,6 +30,7 @@ def list_vehicles(
         str | None, Query(max_length=120, description="Make, model, color or plate")
     ] = None,
     customer_id: Annotated[uuid.UUID | None, Query()] = None,
+    sort: Annotated[str | None, Query(description="created_at | make | year")] = None,
 ) -> PagedResponse[VehicleRead]:
     is_admin = current_user.has_role(Role.ADMIN)
     page = vehicles_service.list_vehicles(
@@ -40,6 +41,7 @@ def list_vehicles(
         pagination=pagination,
         q=q,
         customer_id=customer_id,
+        sort=parse_sort(sort, allowed=vehicles_service.VEHICLE_SORTS, default="-created_at"),
     )
     return paged(
         [VehicleRead.from_model(vehicle, include_owner=is_admin) for vehicle in page.items],

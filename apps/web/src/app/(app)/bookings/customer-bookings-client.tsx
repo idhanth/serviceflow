@@ -113,11 +113,18 @@ export function CustomerBookingsClient({ timeZone }: { timeZone: string }) {
       <ul className="space-y-4">
         {bookings.map((booking) => (
           <li key={booking.id}>
-            <Card className="p-5">
+            <Card className="p-5 transition-colors duration-150 hover:bg-accent/20">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="font-medium">{booking.service.name}</h2>
+                    <h2 className="font-medium">
+                      <Link
+                        href={`/bookings/${booking.id}`}
+                        className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {booking.service.name}
+                      </Link>
+                    </h2>
                     <BookingStatusBadge status={booking.status} />
                     {booking.job ? <JobStatusBadge status={booking.job.status} /> : null}
                   </div>
@@ -151,6 +158,9 @@ export function CustomerBookingsClient({ timeZone }: { timeZone: string }) {
                     <Clock className="size-3.5" aria-hidden />
                     {formatDuration(booking.service.duration_minutes)}
                   </p>
+                  <Button variant="outline" size="sm" render={<Link href={`/bookings/${booking.id}`} />}>
+                    View details
+                  </Button>
                   {booking.status === "PENDING" || booking.status === "CONFIRMED" ? (
                     <Button
                       variant="outline"

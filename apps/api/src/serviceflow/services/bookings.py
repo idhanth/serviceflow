@@ -12,10 +12,11 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import ColumnExpressionArgument, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload, lazyload
+from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload, lazyload
 from sqlalchemy.orm.interfaces import LoaderOption
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -26,18 +27,21 @@ from serviceflow.core.errors import (
     ScheduleConflict,
     ValidationFailed,
 )
-from serviceflow.core.pagination import Page, PageParams
+from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import BookingStatus, JobStatus, Role
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
+from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.services import notifications
 from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.customers import get_customer, get_customer_for_user
 from serviceflow.services.recommendations import EmployeeRecommendation, recommend_employees
 from serviceflow.services.scheduling import AssignmentRequest, get_scheduling_policy
+from serviceflow.services.search import like_pattern
 from serviceflow.services.state_machine import transition_booking, transition_job
 
 logger = logging.getLogger(__name__)
@@ -165,6 +169,8 @@ def list_bookings(
     status: BookingStatus | None = None,
     timeframe: str | None = None,
     customer_id: uuid.UUID | None = None,
+    q: str | None = None,
+    sort: SortSpec | None = None,
 ) -> Page[Booking]:
     filters = [Booking.organization_id == organization_id]
 
@@ -180,26 +186,70 @@ def list_bookings(
     if status is not None:
         filters.append(Booking.status == status)
 
+    if q:
+        # Bookings are looked up by who they are for and what they are.
+        pattern = like_pattern(q)
+        filters.append(
+            or_(
+                Booking.customer.has(
+                    Customer.user.has(
+                        or_(
+                            User.first_name.ilike(pattern),
+                            User.last_name.ilike(pattern),
+                            User.email.ilike(pattern),
+                            (User.first_name + " " + User.last_name).ilike(pattern),
+                        )
+                    )
+                ),
+                Booking.service.has(Service.name.ilike(pattern)),
+                Booking.vehicle.has(
+                    or_(
+                        Vehicle.make.ilike(pattern),
+                        Vehicle.model.ilike(pattern),
+                        Vehicle.license_plate.ilike(pattern),
+                    )
+                ),
+            )
+        )
+
     if timeframe == "upcoming":
         filters.append(_is_upcoming())
     elif timeframe == "past":
         filters.append(~_is_upcoming())
 
     total = db.scalar(select(func.count()).select_from(Booking).where(*filters)) or 0
-    order = (
-        Booking.requested_start.asc() if timeframe == "upcoming" else Booking.requested_start.desc()
-    )
     items = list(
         db.scalars(
             select(Booking)
             .where(*filters)
             .options(*_booking_options())
-            .order_by(order)
+            .order_by(*_booking_order(sort, timeframe))
             .offset(pagination.offset)
             .limit(pagination.page_size)
         ).unique()
     )
     return Page(items=items, total=total)
+
+
+BOOKING_SORTS = frozenset({"requested_start", "created_at", "status"})
+
+
+def _booking_order(
+    sort: SortSpec | None, timeframe: str | None
+) -> list[ColumnExpressionArgument[Any]]:
+    """Upcoming reads soonest-first; everything else newest-first."""
+    if sort is None:
+        default = Booking.requested_start
+        ordered = default.asc() if timeframe == "upcoming" else default.desc()
+        return [ordered, Booking.id.asc()]
+
+    options: dict[str, InstrumentedAttribute[Any]] = {
+        "requested_start": Booking.requested_start,
+        "created_at": Booking.created_at,
+        "status": Booking.status,
+    }
+    chosen = options.get(sort.key, Booking.requested_start)
+    return [chosen.desc() if sort.descending else chosen.asc(), Booking.id.asc()]
 
 
 def count_pending(db: Session, organization_id: uuid.UUID) -> int:
@@ -305,6 +355,9 @@ def create_booking(
         customer_notes=customer_notes,
     )
     db.add(booking)
+    db.flush()
+    # Staged on the same transaction: if the insert fails, nobody is told.
+    notifications.booking_created(db, booking)
     db.commit()
     db.refresh(booking)
     logger.info(
@@ -406,6 +459,8 @@ def confirm_booking(
                 status=JobStatus.ASSIGNED,
             )
         )
+        db.flush()
+        notifications.booking_confirmed(db, booking, employee_name=employee.user.full_name)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -444,6 +499,7 @@ def reject_booking(
     transition_booking(booking, BookingStatus.REJECTED)
     if admin_notes is not None:
         booking.admin_notes = admin_notes
+    notifications.booking_rejected(db, booking)
     db.commit()
     db.refresh(booking)
     return booking
@@ -479,6 +535,7 @@ def cancel_booking(
         booking.admin_notes = (
             f"{booking.admin_notes}\n{reason}".strip() if booking.admin_notes else reason
         )
+    notifications.booking_cancelled(db, booking, cancelled_by_customer=Role.ADMIN not in roles)
     db.commit()
     db.refresh(booking)
     logger.info("booking cancelled", extra={"booking_id": str(booking.id)})
@@ -536,6 +593,7 @@ def reschedule_booking(
             raise InvalidStateTransition(
                 "Work on this booking has already started, so it can't be moved."
             )
+        notifications.booking_rescheduled(db, booking)
         db.commit()
     except IntegrityError as exc:
         db.rollback()

@@ -10,11 +10,12 @@ raises 409 INVALID_STATE_TRANSITION from one place.
 
 from __future__ import annotations
 
+import enum
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, lazyload
 from sqlalchemy.orm.interfaces import LoaderOption
@@ -27,9 +28,13 @@ from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import JobStatus, Role
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
+from serviceflow.db.models.user import User
+from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.services import notifications
 from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.employees import get_employee_for_user
 from serviceflow.services.scheduling import AssignmentRequest, get_scheduling_policy
+from serviceflow.services.search import like_pattern
 from serviceflow.services.state_machine import transition_job
 
 logger = logging.getLogger(__name__)
@@ -84,6 +89,61 @@ def get_job(
     return job
 
 
+class JobAudience(enum.StrEnum):
+    """How a caller reaches a job, which decides what of it they may see."""
+
+    STAFF = "STAFF"  # an admin, or the employee it is assigned to
+    CUSTOMER = "CUSTOMER"  # the customer whose booking produced it
+
+
+def resolve_job_for_viewer(
+    db: Session,
+    organization_id: uuid.UUID,
+    job_id: uuid.UUID,
+    *,
+    roles: frozenset[Role],
+    user_id: uuid.UUID,
+) -> tuple[Job, JobAudience]:
+    """The single authorization boundary for a job's notes and photos.
+
+    Admins and the assigned employee are STAFF. The customer whose booking
+    produced the job is CUSTOMER, which is how they reach their own photos and
+    customer-visible notes without being given the jobs API. Everyone else -
+    another employee, another customer, another tenant - gets the same 404, so a
+    job id cannot be probed.
+    """
+    job = db.scalar(
+        select(Job)
+        .where(Job.id == job_id, Job.organization_id == organization_id)
+        .options(*_job_options())
+    )
+    if job is None:
+        raise NotFound("We couldn't find that job.")
+
+    if Role.ADMIN in roles:
+        return job, JobAudience.STAFF
+
+    if Role.EMPLOYEE in roles:
+        employee = db.scalar(
+            select(Employee).where(
+                Employee.organization_id == organization_id, Employee.user_id == user_id
+            )
+        )
+        if employee is not None and job.employee_id == employee.id:
+            return job, JobAudience.STAFF
+
+    if Role.CUSTOMER in roles:
+        customer = db.scalar(
+            select(Customer).where(
+                Customer.organization_id == organization_id, Customer.user_id == user_id
+            )
+        )
+        if customer is not None and job.booking.customer_id == customer.id:
+            return job, JobAudience.CUSTOMER
+
+    raise NotFound("We couldn't find that job.")
+
+
 def list_jobs(
     db: Session,
     organization_id: uuid.UUID,
@@ -94,6 +154,7 @@ def list_jobs(
     status: JobStatus | None = None,
     employee_id: uuid.UUID | None = None,
     on_date: datetime | None = None,
+    q: str | None = None,
 ) -> Page[Job]:
     filters = [Job.organization_id == organization_id]
 
@@ -105,6 +166,31 @@ def list_jobs(
 
     if status is not None:
         filters.append(Job.status == status)
+    if q:
+        pattern = like_pattern(q)
+        filters.append(
+            Job.booking.has(
+                or_(
+                    Booking.customer.has(
+                        Customer.user.has(
+                            or_(
+                                User.first_name.ilike(pattern),
+                                User.last_name.ilike(pattern),
+                                (User.first_name + " " + User.last_name).ilike(pattern),
+                            )
+                        )
+                    ),
+                    Booking.service.has(Service.name.ilike(pattern)),
+                    Booking.vehicle.has(
+                        or_(
+                            Vehicle.make.ilike(pattern),
+                            Vehicle.model.ilike(pattern),
+                            Vehicle.license_plate.ilike(pattern),
+                        )
+                    ),
+                )
+            )
+        )
     if on_date is not None:
         day_start = on_date.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         filters.extend(
@@ -120,7 +206,7 @@ def list_jobs(
             select(Job)
             .where(*filters)
             .options(*_job_options())
-            .order_by(Job.scheduled_start.asc())
+            .order_by(Job.scheduled_start.asc(), Job.id.asc())
             .offset(pagination.offset)
             .limit(pagination.page_size)
         ).unique()
@@ -173,6 +259,22 @@ def jobs_in_range(
     )
 
 
+def _with_relations(db: Session, organization_id: uuid.UUID, job_id: uuid.UUID) -> Job:
+    """Load the job with the relations a notification body needs.
+
+    The lifecycle transitions lock the row with lazyload("*"), so the booking,
+    customer and vehicle are not loaded on that instance.
+    """
+    job = db.scalar(
+        select(Job)
+        .where(Job.id == job_id, Job.organization_id == organization_id)
+        .options(*_job_options())
+    )
+    if job is None:  # pragma: no cover - locked in this transaction
+        raise NotFound("We couldn't find that job.")
+    return job
+
+
 def _reload(db: Session, organization_id: uuid.UUID, job_id: uuid.UUID) -> Job:
     db.expire_all()
     job = db.scalar(
@@ -196,6 +298,7 @@ def start_job(
     job = get_job(db, organization_id, job_id, roles=roles, user_id=user_id, for_update=True)
     transition_job(job, JobStatus.IN_PROGRESS)
     job.started_at = datetime.now(UTC)
+    notifications.job_started(db, _with_relations(db, organization_id, job_id))
     db.commit()
     logger.info("job started", extra={"job_id": str(job_id)})
     return _reload(db, organization_id, job_id)
@@ -215,6 +318,7 @@ def complete_job(
     job.completed_at = datetime.now(UTC)
     if internal_notes is not None:
         job.internal_notes = internal_notes
+    notifications.job_completed(db, _with_relations(db, organization_id, job_id))
     db.commit()
     logger.info("job completed", extra={"job_id": str(job_id)})
     return _reload(db, organization_id, job_id)

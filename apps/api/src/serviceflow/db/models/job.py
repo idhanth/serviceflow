@@ -16,6 +16,8 @@ from serviceflow.db.models.mixins import OrganizationScoped
 if TYPE_CHECKING:
     from serviceflow.db.models.booking import Booking
     from serviceflow.db.models.employee import Employee
+    from serviceflow.db.models.job_note import JobNote
+    from serviceflow.db.models.job_photo import JobPhoto
 
 
 class Job(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
@@ -60,6 +62,10 @@ class Job(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
 
     booking: Mapped[Booking] = relationship(back_populates="job", lazy="joined")
     employee: Mapped[Employee] = relationship(lazy="joined")
+    notes: Mapped[list[JobNote]] = relationship(back_populates="job", cascade="all, delete-orphan")
+    photos: Mapped[list[JobPhoto]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
 
     @property
     def is_terminal(self) -> bool:

@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
-from serviceflow.core.pagination import Pagination
+from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.db.models.enums import BookingStatus, Role
 from serviceflow.schemas.booking import (
     AssignableEmployee,
@@ -43,6 +43,10 @@ def list_bookings(
     status_filter: Annotated[BookingStatus | None, Query(alias="status")] = None,
     timeframe: Timeframe = None,
     customer_id: Annotated[uuid.UUID | None, Query()] = None,
+    q: Annotated[
+        str | None, Query(max_length=120, description="Customer, service or vehicle")
+    ] = None,
+    sort: Annotated[str | None, Query(description="requested_start | created_at | status")] = None,
 ) -> PagedResponse[BookingRead]:
     is_admin = current_user.has_role(Role.ADMIN)
     page = bookings_service.list_bookings(
@@ -54,6 +58,10 @@ def list_bookings(
         status=status_filter,
         timeframe=timeframe,
         customer_id=customer_id,
+        q=q,
+        sort=parse_sort(sort, allowed=bookings_service.BOOKING_SORTS, default="requested_start")
+        if sort
+        else None,
     )
     return paged(
         [BookingRead.from_model(booking, include_internal=is_admin) for booking in page.items],

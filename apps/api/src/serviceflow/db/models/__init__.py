@@ -20,7 +20,10 @@ from serviceflow.db.models.enums import (
     Role,
 )
 from serviceflow.db.models.job import Job
+from serviceflow.db.models.job_note import JobNote
+from serviceflow.db.models.job_photo import JobPhoto
 from serviceflow.db.models.membership import OrganizationMembership
+from serviceflow.db.models.notification import Notification
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
@@ -35,9 +38,12 @@ __all__ = [
     "Employee",
     "EmployeeAvailability",
     "Job",
+    "JobNote",
+    "JobPhoto",
     "JobStatus",
     "MembershipStatus",
     "NoteVisibility",
+    "Notification",
     "NotificationChannel",
     "NotificationStatus",
     "NotificationType",

@@ -23,13 +23,17 @@ from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import JobStatus, MembershipStatus, Role
 from serviceflow.db.models.job import Job
+from serviceflow.db.models.job_note import JobNote
+from serviceflow.db.models.job_photo import JobPhoto
 from serviceflow.db.models.membership import OrganizationMembership
+from serviceflow.db.models.notification import Notification
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
 from serviceflow.db.seed_availability import seed_availability
 from serviceflow.db.seed_bookings import seed_bookings
+from serviceflow.db.seed_content import seed_job_content, seed_notifications
 from serviceflow.db.seed_data import (
     COLORS,
     CUSTOMER_NOTES,
@@ -275,6 +279,8 @@ def seed(db: Session) -> None:
     # Availability has to exist before bookings, which schedule around it.
     schedules = seed_availability(db, org)
     workload = seed_bookings(db, org, rng)
+    content = seed_job_content(db, org, rng)
+    alerts = seed_notifications(db, org)
 
     logger.info(
         "seed complete",
@@ -287,6 +293,9 @@ def seed(db: Session) -> None:
             "overrides": schedules["overrides"],
             "bookings_created": workload["bookings"],
             "jobs_created": workload["jobs"],
+            "notes": content["notes"],
+            "photos": content["photos"],
+            "notifications": alerts,
         },
     )
 
@@ -309,6 +318,9 @@ def main() -> None:
             ),
             "availability": db.scalar(select(func.count()).select_from(EmployeeAvailability)),
             "overrides": db.scalar(select(func.count()).select_from(AvailabilityOverride)),
+            "notes": db.scalar(select(func.count()).select_from(JobNote)),
+            "photos": db.scalar(select(func.count()).select_from(JobPhoto)),
+            "notifications": db.scalar(select(func.count()).select_from(Notification)),
         }
 
     print(f"Seed complete. Demo logins (password: {DEMO_PASSWORD}):")

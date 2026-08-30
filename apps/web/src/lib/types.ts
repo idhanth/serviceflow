@@ -252,3 +252,63 @@ export interface CalendarFeed {
   data: CalendarEvent[];
   can_filter_by_employee: boolean;
 }
+
+// ---------------------------------------------------------------- phase 5
+
+export type NoteVisibility = "INTERNAL" | "CUSTOMER_VISIBLE";
+export type PhotoType = "BEFORE" | "AFTER" | "OTHER";
+
+export interface JobNote {
+  id: string;
+  content: string;
+  visibility: NoteVisibility;
+  author_name: string;
+  created_at: string;
+}
+
+export interface JobPhoto {
+  id: string;
+  photo_type: PhotoType;
+  mime_type: string;
+  file_size: number;
+  uploaded_by_name: string;
+  created_at: string;
+  /** Short-lived presigned GET; the bucket itself is private. */
+  url: string;
+}
+
+export interface PhotoPresign {
+  url: string;
+  fields: Record<string, string>;
+  storage_key: string;
+  expires_in: number;
+  max_bytes: number;
+}
+
+export type NotificationType =
+  | "BOOKING_CREATED"
+  | "BOOKING_CONFIRMED"
+  | "BOOKING_REJECTED"
+  | "BOOKING_RESCHEDULED"
+  | "BOOKING_CANCELLED"
+  | "APPOINTMENT_REMINDER"
+  | "JOB_STARTED"
+  | "JOB_COMPLETED";
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  subject: string;
+  body: string;
+  unread: boolean;
+  payload: Record<string, string | null> | null;
+  created_at: string;
+}
+
+export interface SearchResult {
+  kind: "customer" | "vehicle" | "booking" | "job" | "employee" | "service";
+  id: string;
+  title: string;
+  subtitle: string;
+  href: string;
+}

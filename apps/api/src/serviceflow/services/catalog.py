@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnExpressionArgument, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import InstrumentedAttribute, Session, selectinload
 
 from serviceflow.core.errors import NotFound, ValidationFailed
-from serviceflow.core.pagination import Page, PageParams
+from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.service import Service
 from serviceflow.services.search import like_pattern
 
@@ -22,6 +23,7 @@ def list_services(
     pagination: PageParams,
     q: str | None = None,
     active: bool | None = None,
+    sort: SortSpec | None = None,
 ) -> Page[Service]:
     filters = [Service.organization_id == organization_id]
     if active is not None:
@@ -36,12 +38,29 @@ def list_services(
             select(Service)
             .where(*filters)
             .options(selectinload(Service.employees))
-            .order_by(Service.active.desc(), Service.name)
+            .order_by(*_service_order(sort))
             .offset(pagination.offset)
             .limit(pagination.page_size)
         )
     )
     return Page(items=items, total=total)
+
+
+SERVICE_SORTS = frozenset({"name", "price", "duration", "created_at"})
+
+
+def _service_order(sort: SortSpec | None) -> list[ColumnExpressionArgument[Any]]:
+    key = sort.key if sort else "name"
+    descending = sort.descending if sort else False
+    options: dict[str, InstrumentedAttribute[Any]] = {
+        "name": Service.name,
+        "price": Service.base_price,
+        "duration": Service.duration_minutes,
+        "created_at": Service.created_at,
+    }
+    chosen = options.get(key, Service.name)
+    ordered = chosen.desc() if descending else chosen.asc()
+    return [Service.active.desc(), ordered, Service.id.asc()]
 
 
 def get_service(db: Session, organization_id: uuid.UUID, service_id: uuid.UUID) -> Service:

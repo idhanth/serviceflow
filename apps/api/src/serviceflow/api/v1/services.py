@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query, status
 
 from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
 from serviceflow.core.errors import NotFound
-from serviceflow.core.pagination import Pagination
+from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.db.models.enums import Role
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
 from serviceflow.schemas.service import ServiceCreate, ServiceRead, ServiceUpdate
@@ -29,12 +29,18 @@ def list_services(
     pagination: Pagination,
     q: Annotated[str | None, Query(max_length=120, description="Name or description")] = None,
     active: Annotated[bool | None, Query()] = None,
+    sort: Annotated[str | None, Query(description="name | price | duration | created_at")] = None,
 ) -> PagedResponse[ServiceRead]:
     # Non-admins never see retired offerings: their `active` filter is ignored
     # rather than honoured, so no query path can surface a retired service.
     effective_active = active if current_user.has_role(Role.ADMIN) else True
     page = catalog.list_services(
-        db, current_user.organization_id, pagination=pagination, q=q, active=effective_active
+        db,
+        current_user.organization_id,
+        pagination=pagination,
+        q=q,
+        active=effective_active,
+        sort=parse_sort(sort, allowed=catalog.SERVICE_SORTS, default="name"),
     )
     return paged(
         [ServiceRead.from_model(service) for service in page.items],

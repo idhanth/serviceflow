@@ -41,6 +41,20 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
 
     # NoDecode: parse the comma-separated env value ourselves instead of as JSON.
+    # ---- Object storage -------------------------------------------------
+    # One S3 client serves both: locally s3_endpoint_url points at MinIO, in
+    # production it is unset and boto3 talks to AWS. Nothing else changes.
+    s3_bucket: str = "serviceflow-media"
+    s3_region: str = "us-east-1"
+    s3_endpoint_url: str | None = None
+    # What the browser should be given, when it differs from the endpoint the
+    # API dials (containers, or a CDN in front of the bucket).
+    s3_public_endpoint_url: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    s3_upload_ttl_seconds: int = 300
+    s3_download_ttl_seconds: int = 900
+
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")

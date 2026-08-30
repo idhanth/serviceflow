@@ -30,6 +30,9 @@ def list_jobs(
     status_filter: Annotated[JobStatus | None, Query(alias="status")] = None,
     employee_id: Annotated[uuid.UUID | None, Query()] = None,
     on_date: Annotated[datetime | None, Query(description="Jobs scheduled on this day")] = None,
+    q: Annotated[
+        str | None, Query(max_length=120, description="Customer, service or vehicle")
+    ] = None,
 ) -> PagedResponse[JobRead]:
     page = jobs_service.list_jobs(
         db,
@@ -40,6 +43,7 @@ def list_jobs(
         status=status_filter,
         employee_id=employee_id,
         on_date=on_date,
+        q=q,
     )
     return paged(
         [JobRead.from_model(job) for job in page.items],

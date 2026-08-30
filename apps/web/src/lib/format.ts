@@ -87,3 +87,10 @@ export function formatRelative(iso: string): string {
 export function isPast(iso: string): boolean {
   return new Date(iso).getTime() < Date.now();
 }
+
+/** 70 -> "70 B", 1536 -> "1.5 KB", 2400000 -> "2.4 MB" */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}

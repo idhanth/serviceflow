@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
-from serviceflow.core.pagination import Pagination
+from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
 from serviceflow.services import employees as employees_service
@@ -28,6 +28,7 @@ def list_employees(
     q: Annotated[str | None, Query(max_length=120, description="Name, email or job title")] = None,
     active: Annotated[bool | None, Query()] = None,
     service_id: Annotated[uuid.UUID | None, Query(description="Only those who perform it")] = None,
+    sort: Annotated[str | None, Query(description="name | job_title | created_at")] = None,
 ) -> PagedResponse[EmployeeRead]:
     page = employees_service.list_employees(
         db,
@@ -36,6 +37,7 @@ def list_employees(
         q=q,
         active=active,
         service_id=service_id,
+        sort=parse_sort(sort, allowed=employees_service.EMPLOYEE_SORTS, default="name"),
     )
     return paged(
         [EmployeeRead.from_model(employee) for employee in page.items],

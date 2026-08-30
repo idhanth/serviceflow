@@ -16,6 +16,7 @@ mkdir -p "$LOGS"
 
 pg_running() { "$SERVICEFLOW_SERVICES_BIN/pg_isready" -q -h "$PGHOST" -p "$PGPORT" 2>/dev/null; }
 redis_running() { "$SERVICEFLOW_SERVICES_BIN/redis-cli" -p "$REDIS_PORT" ping >/dev/null 2>&1; }
+minio_running() { curl -sf "http://127.0.0.1:$MINIO_PORT/minio/health/live" >/dev/null 2>&1; }
 
 start() {
   if [ ! -d "$PGDATA" ]; then
@@ -40,10 +41,22 @@ start() {
     "$SERVICEFLOW_SERVICES_BIN/redis-server" --port "$REDIS_PORT" --daemonize yes \
       --dir "$STATE" --logfile "$LOGS/redis.log" --save ''
   fi
+  if minio_running; then
+    echo "==> minio already running on :$MINIO_PORT"
+  else
+    echo "==> starting minio on :$MINIO_PORT"
+    mkdir -p "$STATE/minio"
+    MINIO_ROOT_USER="$MINIO_ROOT_USER" MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+      nohup minio server "$STATE/minio" --address "127.0.0.1:$MINIO_PORT" \
+      >"$LOGS/minio.log" 2>&1 &
+    for _ in $(seq 1 50); do minio_running && break; sleep 0.2; done
+  fi
   status
 }
 
 stop() {
+  minio_running && curl -sf -X POST "http://127.0.0.1:$MINIO_PORT/minio/admin/v3/service?action=stop" >/dev/null 2>&1
+  pkill -f "minio server $STATE/minio" 2>/dev/null || true
   redis_running && "$SERVICEFLOW_SERVICES_BIN/redis-cli" -p "$REDIS_PORT" shutdown nosave 2>/dev/null || true
   [ -d "$PGDATA" ] && "$SERVICEFLOW_SERVICES_BIN/pg_ctl" -D "$PGDATA" -m fast -w stop 2>/dev/null || true
   echo "==> stopped"
@@ -52,6 +65,7 @@ stop() {
 status() {
   pg_running && echo "postgres  UP    $PGHOST:$PGPORT/$PGDATABASE" || echo "postgres  DOWN"
   redis_running && echo "redis     UP    $PGHOST:$REDIS_PORT" || echo "redis     DOWN"
+  minio_running && echo "minio     UP    $PGHOST:$MINIO_PORT (S3 API)" || echo "minio     DOWN"
 }
 
 reset() { stop; rm -rf "$PGDATA"; echo "==> wiped $PGDATA"; start; }

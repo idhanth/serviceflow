@@ -3,6 +3,8 @@
 import { Menu } from "lucide-react";
 import { useState } from "react";
 
+import { GlobalSearch } from "@/components/shell/global-search";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { SidebarNav } from "@/components/shell/sidebar";
 import { UserMenu } from "@/components/shell/user-menu";
 import { Button } from "@/components/ui/button";
@@ -38,8 +40,9 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
     <div className="min-h-svh bg-muted/30">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r bg-background lg:flex">
-        <div className="p-3">
+        <div className="space-y-2 p-3">
           <OrganizationBadge organization={organization} />
+          {roles.includes("ADMIN") ? <GlobalSearch /> : null}
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-2">
           <SidebarNav roles={roles} />
@@ -50,6 +53,11 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
       </aside>
 
       <div className="lg:pl-64">
+        {/* Desktop utility bar: notifications live here for every role. */}
+        <div className="sticky top-0 z-20 hidden justify-end border-b bg-background/95 px-8 py-2 backdrop-blur lg:flex">
+          <NotificationBell />
+        </div>
+
         {/* Mobile top bar */}
         <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur lg:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -71,7 +79,8 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
               </div>
             </SheetContent>
           </Sheet>
-          <span className="truncate text-sm font-semibold">{organization.name}</span>
+          <span className="flex-1 truncate text-sm font-semibold">{organization.name}</span>
+          <NotificationBell />
         </header>
 
         <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">

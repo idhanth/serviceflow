@@ -36,3 +36,25 @@ class Page[T]:
 
     items: list[T]
     total: int
+
+
+@dataclass(frozen=True, slots=True)
+class SortSpec:
+    """A validated sort choice, resolved against a per-resource allowlist.
+
+    Sort keys are never interpolated from user input into SQL; the request names
+    one of a fixed set of options and the endpoint maps it to columns.
+    """
+
+    key: str
+    descending: bool
+
+
+def parse_sort(raw: str | None, *, allowed: frozenset[str], default: str) -> SortSpec:
+    """Accepts "name" or "-name"; anything unknown falls back to the default."""
+    candidate = (raw or default).strip()
+    descending = candidate.startswith("-")
+    key = candidate.lstrip("-")
+    if key not in allowed:
+        key, descending = default.lstrip("-"), default.startswith("-")
+    return SortSpec(key=key, descending=descending)
