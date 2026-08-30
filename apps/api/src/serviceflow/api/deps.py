@@ -18,12 +18,13 @@ from sqlalchemy.orm import Session
 from serviceflow.auth.principal import CurrentUser
 from serviceflow.auth.provider import AuthProvider
 from serviceflow.core.config import Settings, get_settings
-from serviceflow.core.context import organization_id_var, user_id_var
+from serviceflow.core.context import bind_actor
 from serviceflow.core.errors import Forbidden, Unauthorized
 from serviceflow.db.models.enums import MembershipStatus, Role
 from serviceflow.db.models.membership import OrganizationMembership
 from serviceflow.db.models.user import User
 from serviceflow.db.session import get_session_factory
+from serviceflow.services import ratelimit
 
 
 def get_db() -> Iterator[Session]:
@@ -92,8 +93,7 @@ def get_current_user(
         scoped = memberships
 
     organization_id = scoped[0].organization_id
-    user_id_var.set(str(user.id))
-    organization_id_var.set(str(organization_id))
+    bind_actor(str(user.id), str(organization_id))
 
     return CurrentUser(
         user_id=user.id,
@@ -120,3 +120,54 @@ def require_roles(*roles: Role) -> Callable[[CurrentUser], CurrentUser]:
 
 AdminUser = Annotated[CurrentUser, Depends(require_roles(Role.ADMIN))]
 EmployeeUser = Annotated[CurrentUser, Depends(require_roles(Role.EMPLOYEE, Role.ADMIN))]
+
+
+# ------------------------------------------------------------------ rate limiting
+
+
+def client_identity(request: Request) -> str:
+    """Who to count an unauthenticated request against.
+
+    `X-Forwarded-For` is only consulted when the deployment declares how many
+    proxies it has, and then only the hop that many places from the right - the
+    entries beyond that are supplied by the caller and cannot be trusted. With
+    no declared proxies the direct peer address is used.
+    """
+    settings = get_settings()
+    hops = settings.trusted_proxy_count
+    if hops > 0:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        chain = [part.strip() for part in forwarded.split(",") if part.strip()]
+        if len(chain) >= hops:
+            return f"ip:{chain[-hops]}"
+
+    peer = request.client.host if request.client else "unknown"
+    return f"ip:{peer}"
+
+
+def rate_limit(limit_name: str) -> Callable[[Request], None]:
+    """Limit an unauthenticated endpoint by source address."""
+
+    def _guard(request: Request) -> None:
+        if not get_settings().rate_limiting_enabled:
+            return
+        ratelimit.enforce(limit_name, client_identity(request))
+
+    return _guard
+
+
+def rate_limit_user(limit_name: str) -> Callable[[CurrentUser], None]:
+    """Limit an authenticated endpoint by organization and user.
+
+    Scoping by both means one tenant cannot exhaust another's quota, and two
+    users in the same organization do not consume each other's.
+    """
+
+    def _guard(current_user: ActiveUser) -> None:
+        if not get_settings().rate_limiting_enabled:
+            return
+        ratelimit.enforce(
+            limit_name, f"org:{current_user.organization_id}:user:{current_user.user_id}"
+        )
+
+    return _guard

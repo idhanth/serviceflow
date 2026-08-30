@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from serviceflow.api.v1 import (
+    activity,
     auth,
     availability,
     bookings,
@@ -32,5 +33,6 @@ api_router.include_router(jobs.router)
 api_router.include_router(job_content.router)
 api_router.include_router(notifications.router)
 api_router.include_router(search.router)
+api_router.include_router(activity.router)
 api_router.include_router(calendar.router)
 api_router.include_router(events.router)

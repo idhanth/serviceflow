@@ -13,7 +13,7 @@ from typing import Any
 
 from pythonjsonlogger.json import JsonFormatter
 
-from serviceflow.core.context import organization_id_var, request_id_var, user_id_var
+from serviceflow.core import context
 
 _REDACTED = "[redacted]"
 _SENSITIVE_KEYS = frozenset(
@@ -43,14 +43,8 @@ class ContextJsonFormatter(JsonFormatter):
         log_record["timestamp"] = datetime.fromtimestamp(record.created, UTC).isoformat()
         log_record["level"] = record.levelname
         log_record["logger"] = record.name
-        for key, var in (
-            ("request_id", request_id_var),
-            ("user_id", user_id_var),
-            ("organization_id", organization_id_var),
-        ):
-            value = var.get()
-            if value is not None:
-                log_record.setdefault(key, value)
+        for key, value in context.current_context().items():
+            log_record.setdefault(key, value)
         for key in list(log_record):
             if key.lower() in _SENSITIVE_KEYS:
                 log_record[key] = _REDACTED

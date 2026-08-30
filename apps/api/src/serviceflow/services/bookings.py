@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -31,12 +32,12 @@ from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee
-from serviceflow.db.models.enums import BookingStatus, JobStatus, Role
+from serviceflow.db.models.enums import AuditAction, BookingStatus, JobStatus, Role
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
-from serviceflow.services import notifications, outbox, realtime
+from serviceflow.services import audit, notifications, outbox, realtime
 from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.customers import get_customer, get_customer_for_user
 from serviceflow.services.recommendations import EmployeeRecommendation, recommend_employees
@@ -314,7 +315,14 @@ def create_booking(
     service_id: uuid.UUID,
     requested_start: datetime,
     customer_notes: str | None = None,
+    before_commit: Callable[[Session, Booking], None] | None = None,
 ) -> Booking:
+    """Create a pending booking.
+
+    `before_commit` lets a caller stage more work - the idempotency record -
+    inside this same transaction, so the booking and that record commit or roll
+    back together.
+    """
     if Role.ADMIN in roles:
         if customer_id is None:
             raise ValidationFailed(
@@ -356,8 +364,23 @@ def create_booking(
     )
     db.add(booking)
     db.flush()
+    if before_commit is not None:
+        before_commit(db, booking)
     # Staged on the same transaction: if the insert fails, nobody is told.
     notifications.booking_created(db, booking)
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.BOOKING_CREATED,
+        resource_type="booking",
+        resource_id=booking.id,
+        metadata={
+            "service": service.name,
+            "vehicle": vehicle.display_name,
+            "requested_start": start.isoformat(),
+        },
+    )
     outbox.stage_event(
         db,
         realtime.booking_updated(
@@ -421,6 +444,7 @@ def confirm_booking(
     *,
     employee_id: uuid.UUID,
     admin_notes: str | None = None,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Booking:
     """Confirm a booking and create its job in one transaction.
 
@@ -458,18 +482,40 @@ def confirm_booking(
         if admin_notes is not None:
             booking.admin_notes = admin_notes
 
-        db.add(
-            Job(
-                organization_id=organization_id,
-                booking_id=booking.id,
-                employee_id=employee.id,
-                scheduled_start=booking.requested_start,
-                scheduled_end=booking.requested_end,
-                status=JobStatus.ASSIGNED,
-            )
+        job = Job(
+            organization_id=organization_id,
+            booking_id=booking.id,
+            employee_id=employee.id,
+            scheduled_start=booking.requested_start,
+            scheduled_end=booking.requested_end,
+            status=JobStatus.ASSIGNED,
         )
+        db.add(job)
         db.flush()
         notifications.booking_confirmed(db, booking, employee_name=employee.user.full_name)
+        audit.record(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor_user_id,
+            action=AuditAction.BOOKING_CONFIRMED,
+            resource_type="booking",
+            resource_id=booking.id,
+            metadata={
+                "employee": employee.user.full_name,
+                "scheduled_start": booking.requested_start.isoformat(),
+            },
+        )
+        audit.record(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor_user_id,
+            action=AuditAction.JOB_ASSIGNED,
+            # Filed against the job, like every other JOB_* entry, so filtering
+            # the feed by a job id shows its whole life including this.
+            resource_type="job",
+            resource_id=job.id,
+            metadata={"employee": employee.user.full_name},
+        )
         outbox.stage_event(
             db,
             realtime.booking_updated(
@@ -518,6 +564,15 @@ def reject_booking(
     if admin_notes is not None:
         booking.admin_notes = admin_notes
     notifications.booking_rejected(db, booking)
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.BOOKING_REJECTED,
+        resource_type="booking",
+        resource_id=booking.id,
+        metadata={"service": booking.service.name},
+    )
     outbox.stage_event(
         db,
         realtime.booking_updated(
@@ -563,6 +618,27 @@ def cancel_booking(
             f"{booking.admin_notes}\n{reason}".strip() if booking.admin_notes else reason
         )
     notifications.booking_cancelled(db, booking, cancelled_by_customer=Role.ADMIN not in roles)
+    outbox.stage_event(
+        db,
+        realtime.booking_updated(
+            organization_id=organization_id,
+            booking_id=booking.id,
+            customer_user_id=booking.customer.user_id,
+            employee_user_id=booking.job.employee.user_id if booking.job else None,
+        ),
+    )
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.BOOKING_CANCELLED,
+        resource_type="booking",
+        resource_id=booking.id,
+        metadata={
+            "service": booking.service.name,
+            "by_customer": Role.ADMIN not in roles,
+        },
+    )
     db.commit()
     db.refresh(booking)
     logger.info("booking cancelled", extra={"booking_id": str(booking.id)})
@@ -575,6 +651,7 @@ def reschedule_booking(
     booking_id: uuid.UUID,
     *,
     requested_start: datetime,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Booking:
     """Move a booking, keeping its job window in step.
 
@@ -596,6 +673,7 @@ def reschedule_booking(
     if service is None:  # pragma: no cover - FK guarantees this
         raise NotFound("We couldn't find that service.")
 
+    previous_start = booking.requested_start
     try:
         start, end = booking_window(service, start)
         booking.requested_start = start
@@ -621,6 +699,15 @@ def reschedule_booking(
                 "Work on this booking has already started, so it can't be moved."
             )
         notifications.booking_rescheduled(db, booking)
+        audit.record(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor_user_id,
+            action=AuditAction.BOOKING_RESCHEDULED,
+            resource_type="booking",
+            resource_id=booking.id,
+            metadata={"from": previous_start.isoformat(), "to": start.isoformat()},
+        )
         outbox.stage_event(
             db,
             realtime.booking_updated(

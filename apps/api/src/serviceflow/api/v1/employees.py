@@ -81,6 +81,7 @@ def create_employee(
         job_title=payload.job_title,
         phone=payload.phone,
         service_ids=payload.service_ids,
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[EmployeeRead](data=EmployeeRead.from_model(employee))
 
@@ -102,5 +103,6 @@ def update_employee(
         last_name=changes.get("last_name"),
         phone=changes.get("phone"),
         service_ids=changes.get("service_ids"),
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[EmployeeRead](data=EmployeeRead.from_model(employee))

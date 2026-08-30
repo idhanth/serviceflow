@@ -77,6 +77,7 @@ def create_service(
         base_price=payload.base_price,
         duration_minutes=payload.duration_minutes,
         image_url=payload.image_url,
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[ServiceRead](data=ServiceRead.from_model(service))
 
@@ -90,6 +91,7 @@ def update_service(
         current_user.organization_id,
         service_id,
         changes=payload.model_dump(exclude_unset=True),
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[ServiceRead](data=ServiceRead.from_model(service))
 
@@ -103,5 +105,7 @@ def deactivate_service(
     service_id: uuid.UUID, current_user: AdminUser, db: DbSession
 ) -> DataResponse[ServiceRead]:
     """Deactivates rather than deletes: bookings and jobs will reference services."""
-    service = catalog.deactivate_service(db, current_user.organization_id, service_id)
+    service = catalog.deactivate_service(
+        db, current_user.organization_id, service_id, actor_user_id=current_user.user_id
+    )
     return DataResponse[ServiceRead](data=ServiceRead.from_model(service))

@@ -25,8 +25,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from serviceflow.core.errors import Forbidden, NotFound, UploadFailed, ValidationFailed
-from serviceflow.db.models.enums import JobStatus, PhotoType, Role
+from serviceflow.db.models.enums import AuditAction, JobStatus, PhotoType, Role
 from serviceflow.db.models.job_photo import MAX_PHOTO_BYTES, MAX_PHOTOS_PER_JOB, JobPhoto
+from serviceflow.services import audit
 from serviceflow.services.jobs import JobAudience, resolve_job_for_viewer
 from serviceflow.services.storage import ALLOWED_MIME_TYPES, PresignedUpload, get_object_storage
 
@@ -235,6 +236,16 @@ def delete_photo(
         )
 
     key = photo.storage_key
+    # The storage key is not recorded: it is the address of a private object.
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.PHOTO_DELETED,
+        resource_type="job",
+        resource_id=photo.job_id,
+        metadata={"photo_type": photo.photo_type.value},
+    )
     db.delete(photo)
     db.commit()
 

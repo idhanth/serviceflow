@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from serviceflow.core.errors import Forbidden, NotFound, ValidationFailed
 from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.employee import Employee
-from serviceflow.db.models.enums import Role
+from serviceflow.db.models.enums import AuditAction, Role
+from serviceflow.services import audit
 from serviceflow.services.employees import get_employee, get_employee_for_user
 
 MAX_WEEKLY_WINDOWS = 21  # three windows a day is already an unusual shift pattern
@@ -97,6 +98,7 @@ def replace_weekly(
     db: Session,
     employee: Employee,
     windows: list[tuple[int, dt.time, dt.time]],
+    actor_user_id: uuid.UUID | None = None,
 ) -> list[EmployeeAvailability]:
     """Replace the whole weekly schedule in one transaction.
 
@@ -120,6 +122,15 @@ def replace_weekly(
             )
         )
 
+    audit.record(
+        db,
+        organization_id=employee.organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.AVAILABILITY_UPDATED,
+        resource_type="employee",
+        resource_id=employee.id,
+        metadata={"name": employee.user.full_name, "shifts": len(windows)},
+    )
     try:
         db.commit()
     except IntegrityError as exc:
@@ -141,6 +152,7 @@ def upsert_override(
     start_time: dt.time | None,
     end_time: dt.time | None,
     reason: str | None,
+    actor_user_id: uuid.UUID | None = None,
 ) -> AvailabilityOverride:
     """Set the override for one date, replacing any existing one.
 
@@ -180,12 +192,31 @@ def upsert_override(
     override.end_time = end_time
     override.reason = reason
 
+    audit.record(
+        db,
+        organization_id=employee.organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.AVAILABILITY_OVERRIDE_SET,
+        resource_type="employee",
+        resource_id=employee.id,
+        metadata={
+            "name": employee.user.full_name,
+            "date": date.isoformat(),
+            "available": available,
+        },
+    )
     db.commit()
     db.refresh(override)
     return override
 
 
-def delete_override(db: Session, employee: Employee, override_id: uuid.UUID) -> None:
+def delete_override(
+    db: Session,
+    employee: Employee,
+    override_id: uuid.UUID,
+    *,
+    actor_user_id: uuid.UUID | None = None,
+) -> None:
     override = db.scalar(
         select(AvailabilityOverride).where(
             AvailabilityOverride.id == override_id,
@@ -194,5 +225,14 @@ def delete_override(db: Session, employee: Employee, override_id: uuid.UUID) -> 
     )
     if override is None:
         raise NotFound("We couldn't find that override.")
+    audit.record(
+        db,
+        organization_id=employee.organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.AVAILABILITY_OVERRIDE_REMOVED,
+        resource_type="employee",
+        resource_id=employee.id,
+        metadata={"name": employee.user.full_name, "date": override.date.isoformat()},
+    )
     db.delete(override)
     db.commit()

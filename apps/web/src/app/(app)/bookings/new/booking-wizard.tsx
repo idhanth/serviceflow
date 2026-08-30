@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { usePagedResource, useResourceMutation } from "@/hooks/use-resource";
-import { apiFetchData } from "@/lib/api-client";
+import { apiFetchData, newIdempotencyKey } from "@/lib/api-client";
 import { formatDuration, formatPrice, formatTime } from "@/lib/format";
 import { queryKeys } from "@/lib/query-keys";
 import type { Booking, Service, Vehicle } from "@/lib/types";
@@ -22,6 +22,16 @@ const STEPS = ["Service", "Vehicle", "Date & time", "Review"] as const;
 /** Local datetime string ("2026-09-05T10:00") -> an ISO string with this browser's offset. */
 function toIsoWithOffset(local: string): string {
   return new Date(local).toISOString();
+}
+
+/** A short, stable stamp of the payload. Only has to change when the payload does. */
+function fingerprint(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function minimumSlot(): string {
@@ -69,10 +79,22 @@ export function BookingWizard() {
     return end.toISOString();
   }, [service, slot]);
 
+  // One key per version of the booking the user is trying to make. Retrying the
+  // same booking - a double click, a dropped response, a refresh - reuses it and
+  // the server replays the original instead of creating a second appointment.
+  // Editing any field makes it a different booking, so the key changes with the
+  // payload; the mount nonce keeps two wizards from colliding on one key.
+  const [nonce] = useState(newIdempotencyKey);
+  const idempotencyKey = useMemo(
+    () => `${nonce}-${fingerprint([serviceId, vehicleId, slot, notes.trim()].join("|"))}`,
+    [nonce, serviceId, vehicleId, slot, notes],
+  );
+
   const submit = useResourceMutation<void, Booking>(
     () =>
       apiFetchData<Booking>("bookings", {
         method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
         body: JSON.stringify({
           service_id: serviceId,
           vehicle_id: vehicleId,

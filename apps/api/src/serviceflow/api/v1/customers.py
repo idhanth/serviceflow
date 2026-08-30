@@ -83,6 +83,7 @@ def create_customer(
     customer = customers_service.create_customer(
         db,
         current_user.organization_id,
+        actor_user_id=current_user.user_id,
         email=payload.email,
         first_name=payload.first_name,
         last_name=payload.last_name,
@@ -103,6 +104,7 @@ def update_customer(
         db,
         current_user.organization_id,
         customer_id,
+        actor_user_id=current_user.user_id,
         notes=changes.get("notes"),
         update_notes="notes" in changes,
         first_name=changes.get("first_name"),

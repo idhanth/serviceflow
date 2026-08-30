@@ -77,6 +77,7 @@ def replace_weekly(
         db,
         employee,
         [(w.day_of_week, w.start_time, w.end_time) for w in payload.windows],
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[AvailabilityRead](data=_read(db, employee, dt.date.today()))
 
@@ -109,6 +110,7 @@ def upsert_override(
         start_time=payload.start_time,
         end_time=payload.end_time,
         reason=payload.reason,
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[OverrideRead](data=OverrideRead.model_validate(override))
 
@@ -131,5 +133,5 @@ def delete_override(
         roles=current_user.roles,
         user_id=current_user.user_id,
     )
-    schedules_service.delete_override(db, employee, override_id)
+    schedules_service.delete_override(db, employee, override_id, actor_user_id=current_user.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
-from serviceflow.api.deps import ActiveUser, DbSession
+from serviceflow.api.deps import ActiveUser, DbSession, rate_limit_user
 from serviceflow.db.models.job_photo import MAX_PHOTO_BYTES
 from serviceflow.schemas.envelope import DataResponse
 from serviceflow.schemas.job_content import (
@@ -102,6 +102,7 @@ def list_photos(
     "/photos/presign",
     response_model=DataResponse[PhotoPresignResponse],
     summary="Request an upload slot",
+    dependencies=[Depends(rate_limit_user("photo_presign"))],
 )
 def presign_photo(
     job_id: uuid.UUID, payload: PhotoPresignRequest, current_user: ActiveUser, db: DbSession

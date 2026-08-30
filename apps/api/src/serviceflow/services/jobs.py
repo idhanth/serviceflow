@@ -25,12 +25,12 @@ from serviceflow.core.pagination import Page, PageParams
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee
-from serviceflow.db.models.enums import JobStatus, Role
+from serviceflow.db.models.enums import AuditAction, JobStatus, Role
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
-from serviceflow.services import notifications, outbox, realtime
+from serviceflow.services import audit, notifications, outbox, realtime
 from serviceflow.services.conflicts import is_overlap_violation
 from serviceflow.services.employees import get_employee_for_user
 from serviceflow.services.scheduling import AssignmentRequest, get_scheduling_policy
@@ -300,6 +300,15 @@ def start_job(
     job.started_at = datetime.now(UTC)
     notifications.job_started(db, _with_relations(db, organization_id, job_id))
     loaded = _with_relations(db, organization_id, job_id)
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.JOB_STARTED,
+        resource_type="job",
+        resource_id=job_id,
+        metadata={"service": loaded.booking.service.name},
+    )
     outbox.stage_event(
         db,
         realtime.job_updated(
@@ -330,6 +339,15 @@ def complete_job(
         job.internal_notes = internal_notes
     notifications.job_completed(db, _with_relations(db, organization_id, job_id))
     loaded = _with_relations(db, organization_id, job_id)
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.JOB_COMPLETED,
+        resource_type="job",
+        resource_id=job_id,
+        metadata={"service": loaded.booking.service.name},
+    )
     outbox.stage_event(
         db,
         realtime.job_updated(
@@ -364,6 +382,15 @@ def cancel_job(
             customer_user_id=loaded.booking.customer.user_id,
             employee_user_id=loaded.employee.user_id,
         ),
+    )
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.JOB_CANCELLED,
+        resource_type="job",
+        resource_id=job_id,
+        metadata={"service": loaded.booking.service.name},
     )
     db.commit()
     logger.info("job cancelled", extra={"job_id": str(job_id)})
@@ -400,6 +427,7 @@ def reassign_job(
     if service is None:  # pragma: no cover - FK guarantees this
         raise NotFound("We couldn't find that service.")
 
+    previous_employee = job.employee.user.full_name
     try:
         get_scheduling_policy().check_assignment(
             db,
@@ -415,6 +443,18 @@ def reassign_job(
         job.employee_id = employee.id
         db.flush()
         reassigned = _with_relations(db, organization_id, job_id)
+        audit.record(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            action=AuditAction.JOB_REASSIGNED,
+            resource_type="job",
+            resource_id=job_id,
+            metadata={
+                "from": previous_employee,
+                "to": employee.user.full_name,
+            },
+        )
         outbox.stage_event(
             db,
             realtime.job_updated(

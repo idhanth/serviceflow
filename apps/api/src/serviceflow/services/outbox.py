@@ -27,6 +27,7 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from serviceflow.core.context import current_context
 from serviceflow.services.realtime import RealtimeEvent, publish
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,12 @@ _EVENT_KEY = "_sf_pending_events"
 
 
 def stage_email(db: Session, notification_id: uuid.UUID) -> None:
-    """Queue this notification for dispatch once the transaction commits."""
-    db.info.setdefault(_EMAIL_KEY, []).append(notification_id)
+    """Queue this notification for dispatch once the transaction commits.
+
+    The request's correlation fields are captured now and handed to the worker,
+    so a delivery log line can be traced back to the request that caused it.
+    """
+    db.info.setdefault(_EMAIL_KEY, []).append((notification_id, current_context()))
 
 
 def stage_event(db: Session, realtime_event: RealtimeEvent) -> None:
@@ -53,13 +58,13 @@ def _drain(session: Session, key: str) -> list[Any]:
 @event.listens_for(Session, "after_commit")
 def _flush_outbox(session: Session) -> None:
     """Fire staged side effects. Never raises into the caller."""
-    for notification_id in _drain(session, _EMAIL_KEY):
+    for notification_id, context in _drain(session, _EMAIL_KEY):
         try:
             # Imported here: the worker imports this module, and importing tasks
             # at module scope would make that circular.
             from serviceflow.worker.tasks import dispatch_email
 
-            dispatch_email.delay(str(notification_id))
+            dispatch_email.delay(str(notification_id), context=context)
         except Exception:
             logger.warning(
                 "could not queue email dispatch; left for the sweep",

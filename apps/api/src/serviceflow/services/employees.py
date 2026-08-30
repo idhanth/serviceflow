@@ -11,9 +11,10 @@ from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload, selectinl
 from serviceflow.core.errors import NotFound, ValidationFailed
 from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.employee import Employee
-from serviceflow.db.models.enums import Role
+from serviceflow.db.models.enums import AuditAction, Role
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
+from serviceflow.services import audit
 from serviceflow.services.people import (
     ensure_membership,
     find_or_create_user,
@@ -135,6 +136,7 @@ def create_employee(
     job_title: str,
     phone: str | None = None,
     service_ids: list[uuid.UUID] | None = None,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Employee:
     user = find_or_create_user(
         db, email=email, first_name=first_name, last_name=last_name, phone=phone
@@ -159,6 +161,16 @@ def create_employee(
     )
     employee.services = _resolve_services(db, organization_id, service_ids or [])
     db.add(employee)
+    db.flush()
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.EMPLOYEE_CREATED,
+        resource_type="employee",
+        resource_id=employee.id,
+        metadata={"name": user.full_name, "job_title": employee.job_title},
+    )
     db.commit()
     db.refresh(employee)
     return employee
@@ -175,6 +187,7 @@ def update_employee(
     last_name: str | None = None,
     phone: str | None = None,
     service_ids: list[uuid.UUID] | None = None,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Employee:
     employee = get_employee(db, organization_id, employee_id)
 
@@ -188,16 +201,30 @@ def update_employee(
         employee.user.phone = phone or None
     if service_ids is not None:
         employee.services = _resolve_services(db, organization_id, service_ids)
-    if active is not None and active != employee.active:
-        employee.active = active
+    activation_changed = active is not None and active != employee.active
+    if activation_changed:
+        employee.active = bool(active)
         set_membership_status(
             db,
             organization_id=organization_id,
             user_id=employee.user_id,
             role=Role.EMPLOYEE,
-            active=active,
+            active=bool(active),
         )
 
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=(
+            (AuditAction.EMPLOYEE_REACTIVATED if active else AuditAction.EMPLOYEE_DEACTIVATED)
+            if activation_changed
+            else AuditAction.EMPLOYEE_UPDATED
+        ),
+        resource_type="employee",
+        resource_id=employee.id,
+        metadata={"name": employee.user.full_name, "job_title": employee.job_title},
+    )
     db.commit()
     db.refresh(employee)
     return employee

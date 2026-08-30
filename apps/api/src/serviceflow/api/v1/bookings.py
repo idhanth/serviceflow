@@ -10,9 +10,9 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 
-from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
+from serviceflow.api.deps import ActiveUser, AdminUser, DbSession, rate_limit_user
 from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.db.models.enums import BookingStatus, Role
 from serviceflow.schemas.booking import (
@@ -27,6 +27,7 @@ from serviceflow.schemas.booking import (
 )
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
 from serviceflow.services import bookings as bookings_service
+from serviceflow.services import idempotency
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -92,10 +93,64 @@ def get_booking(
     response_model=DataResponse[BookingRead],
     status_code=status.HTTP_201_CREATED,
     summary="Request a booking",
+    dependencies=[Depends(rate_limit_user("booking_create"))],
 )
 def create_booking(
-    payload: BookingCreate, current_user: ActiveUser, db: DbSession
+    payload: BookingCreate,
+    current_user: ActiveUser,
+    db: DbSession,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> DataResponse[BookingRead]:
+    """Create a booking, optionally idempotently (PRD 14).
+
+    With an `Idempotency-Key`, a retry of the same request returns the original
+    booking instead of making a second one, and the same key with a different
+    body is refused as a conflict. The key is scoped to this organization and
+    this user, so the same string from someone else never collides.
+    """
+    is_admin = current_user.has_role(Role.ADMIN)
+    hook = None
+
+    if idempotency_key is not None:
+        fields = payload.model_dump(mode="json")
+        replay = idempotency.begin(
+            db,
+            organization_id=current_user.organization_id,
+            user_id=current_user.user_id,
+            key=idempotency_key,
+            operation="create_booking",
+            payload=fields,
+        )
+        if replay is not None:
+            # The original result, not a new booking.
+            booking = bookings_service.get_booking(
+                db,
+                current_user.organization_id,
+                replay.resource_id,
+                roles=current_user.roles,
+                user_id=current_user.user_id,
+            )
+            response.status_code = status.HTTP_200_OK
+            response.headers["Idempotent-Replay"] = "true"
+            return DataResponse[BookingRead](
+                data=BookingRead.from_model(booking, include_internal=is_admin)
+            )
+
+        def hook(session, created):  # type: ignore[no-untyped-def]
+            # Staged inside the booking's transaction: a rollback takes the
+            # record with it, so no record can claim a booking that never existed.
+            idempotency.complete(
+                session,
+                organization_id=current_user.organization_id,
+                user_id=current_user.user_id,
+                key=idempotency_key,
+                resource_type="booking",
+                resource_id=created.id,
+                response_status=status.HTTP_201_CREATED,
+                response_body={"booking_id": str(created.id)},
+            )
+
     booking = bookings_service.create_booking(
         db,
         current_user.organization_id,
@@ -106,9 +161,10 @@ def create_booking(
         service_id=payload.service_id,
         requested_start=payload.requested_start,
         customer_notes=payload.customer_notes,
+        before_commit=hook,
     )
     return DataResponse[BookingRead](
-        data=BookingRead.from_model(booking, include_internal=current_user.has_role(Role.ADMIN))
+        data=BookingRead.from_model(booking, include_internal=is_admin)
     )
 
 
@@ -162,6 +218,7 @@ def confirm_booking(
         booking_id,
         employee_id=payload.employee_id,
         admin_notes=payload.admin_notes,
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[BookingRead](data=BookingRead.from_model(booking, include_internal=True))
 
@@ -218,6 +275,7 @@ def reschedule_booking(
         current_user.organization_id,
         booking_id,
         requested_start=payload.requested_start,
+        actor_user_id=current_user.user_id,
     )
     return DataResponse[BookingRead](data=BookingRead.from_model(booking, include_internal=True))
 

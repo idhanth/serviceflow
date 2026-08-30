@@ -1,6 +1,7 @@
 """Model registry. Import every model here so Alembic autogenerate sees them."""
 
 from serviceflow.db.base import Base
+from serviceflow.db.models.audit import AuditLog
 from serviceflow.db.models.availability import (
     AvailabilityOverride,
     EmployeeAvailability,
@@ -9,6 +10,7 @@ from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee, employee_services
 from serviceflow.db.models.enums import (
+    AuditAction,
     BookingStatus,
     JobStatus,
     MembershipStatus,
@@ -19,6 +21,7 @@ from serviceflow.db.models.enums import (
     PhotoType,
     Role,
 )
+from serviceflow.db.models.idempotency import IdempotencyRecord
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.job_note import JobNote
 from serviceflow.db.models.job_photo import JobPhoto
@@ -30,6 +33,8 @@ from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
 
 __all__ = [
+    "AuditAction",
+    "AuditLog",
     "AvailabilityOverride",
     "Base",
     "Booking",
@@ -37,6 +42,7 @@ __all__ = [
     "Customer",
     "Employee",
     "EmployeeAvailability",
+    "IdempotencyRecord",
     "Job",
     "JobNote",
     "JobPhoto",

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from serviceflow.api.deps import AdminUser, DbSession
+from serviceflow.api.deps import AdminUser, DbSession, rate_limit_user
 from serviceflow.schemas.envelope import DataResponse
 from serviceflow.services import global_search
 
@@ -22,7 +22,12 @@ class SearchResult(BaseModel):
     href: str
 
 
-@router.get("", response_model=DataResponse[list[SearchResult]], summary="Search everything")
+@router.get(
+    "",
+    response_model=DataResponse[list[SearchResult]],
+    summary="Search everything",
+    dependencies=[Depends(rate_limit_user("search"))],
+)
 def search(
     current_user: AdminUser,
     db: DbSession,

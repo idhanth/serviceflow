@@ -16,8 +16,9 @@ from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload
 from serviceflow.core.errors import Forbidden, NotFound
 from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.customer import Customer
-from serviceflow.db.models.enums import Role
+from serviceflow.db.models.enums import AuditAction, Role
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.services import audit
 from serviceflow.services.customers import get_customer, get_customer_for_user
 from serviceflow.services.search import like_pattern
 
@@ -216,6 +217,15 @@ def archive_vehicle(
     )
     if vehicle.archived_at is None:
         vehicle.archived_at = datetime.now(UTC)
+        audit.record(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            action=AuditAction.VEHICLE_ARCHIVED,
+            resource_type="vehicle",
+            resource_id=vehicle.id,
+            metadata={"vehicle": vehicle.display_name},
+        )
         db.commit()
         db.refresh(vehicle)
     return vehicle

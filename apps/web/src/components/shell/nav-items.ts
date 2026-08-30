@@ -36,7 +36,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Employees", href: "/employees", icon: UserSquare, roles: ["ADMIN"] },
   { label: "Services", href: "/services", icon: Sparkles, roles: ["ADMIN"] },
   { label: "Analytics", href: "/analytics", comingSoon: true, icon: BarChart3, roles: ["ADMIN"] },
-  { label: "Activity", href: "/activity", comingSoon: true, icon: Activity, roles: ["ADMIN"] },
+  { label: "Activity", href: "/activity", icon: Activity, roles: ["ADMIN"] },
   { label: "Settings", href: "/settings", comingSoon: true, icon: Settings, roles: ["ADMIN", "EMPLOYEE", "CUSTOMER"] },
 ];
 

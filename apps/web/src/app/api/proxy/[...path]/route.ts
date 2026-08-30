@@ -56,11 +56,18 @@ async function forward(request: Request, path: string[]) {
   }
 
   const responseBody = await upstream.text();
+  const responseHeaders = new Headers({
+    "Content-Type": upstream.headers.get("content-type") ?? "application/json",
+  });
+  // Pass through what the client needs to react to a failure: how long to wait,
+  // and the id to quote when reporting it. Nothing else from upstream is copied.
+  for (const name of ["retry-after", "x-request-id", "idempotent-replay"]) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
   return new NextResponse(responseBody || null, {
     status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-    },
+    headers: responseHeaders,
   });
 }
 

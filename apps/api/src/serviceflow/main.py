@@ -16,6 +16,7 @@ from serviceflow.api.middleware import RequestContextMiddleware
 from serviceflow.api.v1 import health
 from serviceflow.api.v1.router import api_router
 from serviceflow.auth.provider import build_auth_provider
+from serviceflow.core import context
 from serviceflow.core.config import Settings, get_settings
 from serviceflow.core.errors import AppError, ErrorCode
 from serviceflow.core.logging import configure_logging
@@ -37,22 +38,46 @@ def _error_response(
     message: str,
     request: Request,
     details: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    """The one shape every failure takes (PRD 37).
+
+    `request_id` comes from the context rather than request.state, so it is
+    present even for failures raised before a route ever runs.
+    """
+    request_id = context.request_id() or getattr(request.state, "request_id", None)
     body = ErrorResponse(
         error=ErrorBody(
             code=code,
             message=message,
-            request_id=getattr(request.state, "request_id", None),
+            request_id=request_id,
             details=details or None,
         )
     )
-    return JSONResponse(status_code=status_code, content=body.model_dump(exclude_none=True))
+    response_headers = dict(headers or {})
+    if request_id:
+        # Starlette runs ServerErrorMiddleware outside every user middleware, so a
+        # 500 rendered here never passes through the one that stamps this header.
+        # Setting it on the envelope makes the id reportable on all failures.
+        response_headers["X-Request-Id"] = request_id
+    return JSONResponse(
+        status_code=status_code,
+        content=body.model_dump(exclude_none=True),
+        headers=response_headers or None,
+    )
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
-        return _error_response(exc.status_code, exc.code, exc.message, request, exc.details)
+        headers: dict[str, str] = {}
+        # Rate limits tell the caller when to come back rather than making them guess.
+        retry_after = (exc.details or {}).get("retry_after")
+        if isinstance(retry_after, int):
+            headers["Retry-After"] = str(retry_after)
+        return _error_response(
+            exc.status_code, exc.code, exc.message, request, exc.details, headers or None
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -75,8 +100,20 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        # Log the traceback; return nothing that leaks internals (PRD 29).
-        logger.exception("unhandled exception", extra={"path": request.url.path})
+        """Anything unforeseen.
+
+        The traceback goes to the log with its request id; the client gets a
+        stable code, a safe sentence and that same id. No exception text, SQL,
+        stack frame or path ever crosses the boundary (PRD 29, 41).
+        """
+        logger.exception(
+            "unhandled exception",
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "exception_type": type(exc).__name__,
+            },
+        )
         return _error_response(
             500,
             ErrorCode.INTERNAL_ERROR,

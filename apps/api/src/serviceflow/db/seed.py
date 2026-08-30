@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from serviceflow.auth.passwords import hash_password
 from serviceflow.core.logging import configure_logging
+from serviceflow.db.models.audit import AuditLog
 from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
@@ -31,6 +32,7 @@ from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.db.seed_audit import seed_audit_trail
 from serviceflow.db.seed_availability import seed_availability
 from serviceflow.db.seed_bookings import seed_bookings
 from serviceflow.db.seed_content import seed_job_content, seed_notifications
@@ -228,7 +230,15 @@ def seed_vehicles(db: Session, org: Organization, rng: random.Random) -> int:
         return 0
 
     customers = list(
-        db.scalars(select(Customer).where(Customer.organization_id == org.id).order_by(Customer.id))
+        db.scalars(
+            select(Customer)
+            .where(Customer.organization_id == org.id)
+            # By email, not by id: ids are fresh UUIDs on every rebuild, so
+            # ordering by them would hand rng.choice a differently ordered list
+            # and the fixed seed would produce a different demo each time.
+            .join(Customer.user)
+            .order_by(User.email)
+        )
     )
     if not customers:
         return 0
@@ -281,6 +291,8 @@ def seed(db: Session) -> None:
     workload = seed_bookings(db, org, rng)
     content = seed_job_content(db, org, rng)
     alerts = seed_notifications(db, org)
+    # Last: it reconstructs the trail from everything above.
+    trail = seed_audit_trail(db, org, rng)
 
     logger.info(
         "seed complete",
@@ -296,6 +308,7 @@ def seed(db: Session) -> None:
             "notes": content["notes"],
             "photos": content["photos"],
             "notifications": alerts,
+            "audit_entries": trail,
         },
     )
 
@@ -321,6 +334,7 @@ def main() -> None:
             "notes": db.scalar(select(func.count()).select_from(JobNote)),
             "photos": db.scalar(select(func.count()).select_from(JobPhoto)),
             "notifications": db.scalar(select(func.count()).select_from(Notification)),
+            "audit_entries": db.scalar(select(func.count()).select_from(AuditLog)),
         }
 
     print(f"Seed complete. Demo logins (password: {DEMO_PASSWORD}):")

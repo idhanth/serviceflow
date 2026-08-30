@@ -4,10 +4,12 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 6 of 10 complete** — the product surface now sits on real
-infrastructure: Celery workers deliver email off the request path, appointment
-reminders run on a schedule, and Server-Sent Events push booking and job changes
-to connected clients without polling. See [Roadmap](#roadmap).
+**Status: Phase 7 of 10 complete** — on top of real infrastructure (Celery
+workers, scheduled reminders, Server-Sent Events) the system now holds up when
+things go wrong: a resubmitted booking cannot become two, every change to a
+booking, job, employee or service is recorded in a table PostgreSQL will not let
+anyone edit, abuse-prone endpoints are limited atomically in Redis, and failures
+return a request id instead of a stack trace. See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -90,6 +92,10 @@ Three decisions worth knowing up front:
   comes from a verified active membership. A caller can ask for an organization
   via `X-Organization-Id`, but a mismatch is refused, and a foreign organization
   is indistinguishable from a nonexistent one.
+- **History is never deleted.** Services deactivate and vehicles archive rather
+  than disappearing, and `bookings.vehicle_id` / `service_id` are `ON DELETE
+  RESTRICT`, so a past appointment can always still say what was done to which
+  car ([ADR 0002](docs/adr-0002-phase2-entity-decisions.md)).
 - **A confirmed booking always has exactly one job.** The booking row is locked
   for the confirmation transaction, the state machine refuses a second confirm,
   and `jobs.booking_id` is unique — three independent guards, all tested
@@ -114,11 +120,29 @@ Three decisions worth knowing up front:
   writing any metadata, so a `JobPhoto` row cannot describe a file that was not
   uploaded. Reads are short-lived presigned GETs
   ([ADR 0005](docs/adr-0005-object-storage-and-notifications.md)).
+- **A resubmitted booking cannot become two.** `Idempotency-Key` is claimed on a
+  unique constraint inside the booking's own transaction, so concurrent requests
+  with one key produce one booking: the loser of the race replays the winner's
+  response. A changed payload under a used key is a 409, not a silent second
+  appointment ([ADR 0007](docs/adr-0007-idempotency-audit-and-limits.md)).
+- **The audit trail cannot be rewritten.** A `BEFORE UPDATE OR DELETE` trigger
+  rejects both statements on `audit_logs`, so "who changed this booking" is not a
+  question the application can answer differently later. Entries are staged in
+  the business transaction, and their metadata is a summary — never a note's
+  contents, a token or a presigned signature.
+- **Rate limits are atomic across processes.** One Lua script does INCR, EXPIRE
+  and TTL in a single Redis round trip. Signup and login fail *closed* if Redis
+  is unreachable; authenticated limits fail open, because a limiter outage should
+  not become a product outage.
+- **Failures leak nothing.** One error envelope, a stable code, a sentence for a
+  person and a request id that also appears in the logs. No exception text, SQL,
+  stack frame or filesystem path reaches a client, and a rejected password is
+  never echoed back in a validation message.
 
 ## Testing
 
 ```bash
-cd apps/api && uv run pytest        # 393 tests
+cd apps/api && uv run pytest        # 478 tests
 ```
 
 Infrastructure is exercised, not mocked: photo tests upload to MinIO for real,
@@ -141,12 +165,14 @@ concurrency suite below.
 shared barrier so the race actually happens:
 
 ```bash
-uv run pytest tests/test_concurrency.py    # 22 tests
+uv run pytest tests/test_concurrency.py tests/test_idempotency.py    # 49 tests
 ```
 
 Simultaneous overlapping assignments leave exactly one winner; simultaneous
 adjacent ones all succeed; the same applies to concurrent reassignment and
-reschedule.
+reschedule. Concurrent requests carrying one idempotency key create exactly one
+booking, and thirty simultaneous requests against a limit of ten leave exactly
+ten allowed — proved against real Redis, not a stub.
 
 ## Roadmap
 
@@ -158,8 +184,8 @@ reschedule.
 | 4 | Availability, conflict detection, transaction safety, calendar | done |
 | 5 | Photos, notes, search, filtering, notifications | done |
 | 6 | Redis, Celery, email, realtime | done |
-| 7 | Idempotency, audit logs, rate limiting | next |
-| 8 | Integration, E2E, concurrency and load tests | |
+| 7 | Idempotency, audit logs, rate limiting, observability | done |
+| 8 | Integration, E2E, concurrency and load tests | next |
 | 9 | UI polish, responsive, dark mode | |
 | 10 | CI/CD, production infrastructure, monitoring | |
 

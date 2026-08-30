@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     reminder_lead_hours: int = 24
     reminder_window_minutes: int = 90
 
+    # ---- Rate limiting ------------------------------------------------
+    rate_limiting_enabled: bool = True
+    # How many proxies sit in front of the API. 0 means trust nothing and use
+    # the direct peer address; X-Forwarded-For from the open internet is
+    # attacker-controlled, so it is only consulted when the deployment says how
+    # many hops are actually ours.
+    trusted_proxy_count: int = 0
+
     # ---- Realtime -----------------------------------------------------
     sse_keepalive_seconds: int = 20
 

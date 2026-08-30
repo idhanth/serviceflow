@@ -6,15 +6,31 @@ export class ApiError extends Error {
   readonly status: number;
   readonly requestId?: string;
   readonly details?: Record<string, unknown>;
+  /** Seconds to wait before retrying, from a rate-limited response. */
+  readonly retryAfter?: number;
 
-  constructor(status: number, body: ApiErrorBody) {
+  constructor(status: number, body: ApiErrorBody, retryAfter?: number) {
     super(body.message);
     this.name = "ApiError";
     this.status = status;
     this.code = body.code;
     this.requestId = body.request_id;
     this.details = body.details;
+    this.retryAfter = retryAfter;
   }
+}
+
+/**
+ * A key that identifies one booking attempt, not one click.
+ *
+ * The server stores it, so replaying the same key with the same payload returns
+ * the original booking instead of creating a second one - which is what makes a
+ * double submit, a lost response or a refresh mid-request safe. Disabling the
+ * button is a nicety; this is the actual guarantee.
+ */
+export function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `key-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 const FALLBACK: ApiErrorBody = {
@@ -43,11 +59,20 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
 
   const text = await response.text();
-  const body = text ? (JSON.parse(text) as unknown) : null;
+  let body: unknown = null;
+  try {
+    body = text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    // A gateway or proxy answered with something that is not our envelope.
+    // Whatever it says is not for the user to read.
+    throw new ApiError(response.status || 502, FALLBACK);
+  }
 
   if (!response.ok) {
     const error = (body as { error?: ApiErrorBody } | null)?.error ?? FALLBACK;
-    throw new ApiError(response.status, error);
+    const header = response.headers.get("Retry-After");
+    const retryAfter = header && /^\d+$/.test(header) ? Number(header) : undefined;
+    throw new ApiError(response.status, error, retryAfter);
   }
   return body as T;
 }

@@ -15,8 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from serviceflow.core.errors import Forbidden, NotFound, ValidationFailed
-from serviceflow.db.models.enums import NoteVisibility, Role
+from serviceflow.db.models.enums import AuditAction, NoteVisibility, Role
 from serviceflow.db.models.job_note import JobNote
+from serviceflow.services import audit
 from serviceflow.services.jobs import JobAudience, resolve_job_for_viewer
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,18 @@ def create_note(
         visibility=visibility,
     )
     db.add(note)
+    db.flush()
+    # The note's text is deliberately not recorded: an internal note must not be
+    # copied into a table with no delete.
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.NOTE_ADDED,
+        resource_type="job",
+        resource_id=job_id,
+        metadata={"visibility": visibility.value},
+    )
     db.commit()
     db.refresh(note)
     logger.info("job note created", extra={"job_id": str(job_id), "visibility": visibility.value})
@@ -131,5 +144,14 @@ def delete_note(
     if Role.ADMIN not in roles and note.author_id != user_id:
         raise Forbidden("You can only remove notes you wrote.")
 
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=user_id,
+        action=AuditAction.NOTE_DELETED,
+        resource_type="job",
+        resource_id=note.job_id,
+        metadata={"visibility": note.visibility.value},
+    )
     db.delete(note)
     db.commit()

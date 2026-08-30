@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from serviceflow.api.deps import ActiveUser, DbSession
+from serviceflow.api.deps import ActiveUser, DbSession, rate_limit
 from serviceflow.auth.passwords import verify_password
 from serviceflow.auth.provider import DevJWTAuthProvider
 from serviceflow.core.config import get_settings
@@ -66,7 +66,12 @@ def _load_user_with_memberships(
     return db.scalar(stmt)
 
 
-@router.post("/login", response_model=LoginResponse, summary="Sign in (dev provider only)")
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    summary="Sign in (dev provider only)",
+    dependencies=[Depends(rate_limit("login"))],
+)
 def login(payload: LoginRequest, request: Request, db: DbSession) -> LoginResponse:
     provider = request.app.state.auth_provider
     if not isinstance(provider, DevJWTAuthProvider):
@@ -100,6 +105,7 @@ def me(current_user: ActiveUser, db: DbSession) -> DataResponse[SessionUser]:
     response_model=LoginResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a customer account (dev provider only)",
+    dependencies=[Depends(rate_limit("signup"))],
 )
 def signup(payload: SignupRequest, request: Request, db: DbSession) -> LoginResponse:
     """Registers a customer and signs them straight in.

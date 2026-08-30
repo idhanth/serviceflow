@@ -36,6 +36,10 @@ os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "serviceflow-dev-secret")
 os.environ.setdefault("SERVICEFLOW_BROKER_URL", "memory://")
 os.environ.setdefault("SERVICEFLOW_RESULT_BACKEND", "cache+memory://")
 # Email goes to the local MailPit, which is a real SMTP server.
+# Rate limiting is off by default: every test signs in from the same identity,
+# so a shared limiter would exhaust itself. tests/test_rate_limiting.py turns it
+# on explicitly and exercises it against real Redis.
+os.environ.setdefault("RATE_LIMITING_ENABLED", "false")
 os.environ.setdefault("EMAIL_PROVIDER", "smtp")
 os.environ.setdefault("SMTP_HOST", "127.0.0.1")
 os.environ.setdefault("SMTP_PORT", "1025")
@@ -47,6 +51,7 @@ import psycopg  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from serviceflow.auth.passwords import hash_password  # noqa: E402
@@ -140,9 +145,14 @@ def db() -> Iterator[Session]:
 
 @pytest.fixture(autouse=True)
 def _clean_tables(db: Session) -> Iterator[None]:
+    """Reset between tests with one TRUNCATE.
+
+    Not per-table DELETE: `audit_logs` carries an append-only trigger that
+    rejects DELETE by design, and TRUNCATE is both permitted and faster.
+    """
     yield
-    for table in reversed(Base.metadata.sorted_tables):
-        db.execute(table.delete())
+    tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+    db.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     db.commit()
 
 
@@ -562,3 +572,29 @@ def email_rows(db: Session, **filters) -> list[Notification]:  # type: ignore[no
         .order_by(Notification.created_at)
         .all()
     )
+
+
+@pytest.fixture()
+def rate_limiting() -> Iterator[None]:
+    """Turn the limiter on for one test, against a clean set of Redis keys."""
+    import redis as redis_module
+
+    from serviceflow.core.config import get_settings
+    from serviceflow.services import ratelimit
+
+    settings = get_settings()
+    previous = settings.rate_limiting_enabled
+    object.__setattr__(settings, "rate_limiting_enabled", True)
+    ratelimit.reset_client()
+
+    client = redis_module.Redis.from_url(str(settings.redis_url))
+    for key in client.scan_iter("sf:rl:*"):
+        client.delete(key)
+
+    yield
+
+    for key in client.scan_iter("sf:rl:*"):
+        client.delete(key)
+    client.close()
+    object.__setattr__(settings, "rate_limiting_enabled", previous)
+    ratelimit.reset_client()

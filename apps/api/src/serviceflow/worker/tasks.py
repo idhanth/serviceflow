@@ -13,8 +13,9 @@ import uuid
 from celery.exceptions import MaxRetriesExceededError
 
 from serviceflow.core.config import get_settings
+from serviceflow.core.context import adopt_context
 from serviceflow.db.session import session_scope
-from serviceflow.services import delivery, reminders
+from serviceflow.services import delivery, idempotency, reminders
 from serviceflow.services.email import EmailDeliveryError
 from serviceflow.worker.celery_app import celery_app
 
@@ -34,13 +35,18 @@ logger = logging.getLogger(__name__)
     max_retries=5,
     acks_late=True,
 )
-def dispatch_email(self, notification_id: str) -> str:  # type: ignore[no-untyped-def]
+def dispatch_email(  # type: ignore[no-untyped-def]
+    self, notification_id: str, context: dict[str, str] | None = None
+) -> str:
     """Send one EMAIL notification.
 
     The row is claimed with SELECT ... FOR UPDATE SKIP LOCKED and held for the
     provider call, so two workers never send the same message at once. Anything
     already SENT or FAILED is a no-op, which makes redelivery of this task safe.
     """
+    # Adopt the originating request's correlation fields, so
+    # request_id -> booking -> notification -> delivery is one traceable chain.
+    adopt_context(context)
     identifier = uuid.UUID(notification_id)
 
     with session_scope() as db:
@@ -91,11 +97,29 @@ def sweep_pending_emails() -> int:
         stranded = delivery.stranded_pending_ids(db)
 
     for notification_id in stranded:
+        # The sweep has no originating request; the task logs its own id.
         dispatch_email.delay(str(notification_id))
 
     if stranded:
         logger.info("swept stranded emails", extra={"count": len(stranded)})
     return len(stranded)
+
+
+@celery_app.task(name="serviceflow.purge_expired_idempotency_keys", acks_late=True)  # type: ignore[untyped-decorator]
+def purge_expired_idempotency_keys() -> int:
+    """Drop idempotency records past their retention window.
+
+    Without this the table grows forever, keeping a record of who requested what
+    long after the replay window it exists to serve. Deleting in bounded batches
+    means a long-neglected table is cleared over several beats rather than in one
+    lock-heavy statement.
+    """
+    with session_scope() as db:
+        removed = idempotency.purge_expired(db)
+
+    if removed:
+        logger.info("purged expired idempotency records", extra={"count": removed})
+    return removed
 
 
 @celery_app.task(name="serviceflow.queue_appointment_reminders", acks_late=True)  # type: ignore[untyped-decorator]

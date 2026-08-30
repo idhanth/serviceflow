@@ -11,9 +11,10 @@ from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload
 from serviceflow.core.errors import Forbidden, NotFound, ValidationFailed
 from serviceflow.core.pagination import Page, PageParams, SortSpec
 from serviceflow.db.models.customer import Customer
-from serviceflow.db.models.enums import Role
+from serviceflow.db.models.enums import AuditAction, Role
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.services import audit
 from serviceflow.services.people import ensure_membership, find_or_create_user
 from serviceflow.services.search import like_pattern
 
@@ -137,6 +138,7 @@ def create_customer(
     db: Session,
     organization_id: uuid.UUID,
     *,
+    actor_user_id: uuid.UUID,
     email: str,
     first_name: str,
     last_name: str,
@@ -161,6 +163,18 @@ def create_customer(
     ensure_membership(db, organization_id=organization_id, user_id=user.id, role=Role.CUSTOMER)
     customer = Customer(organization_id=organization_id, user_id=user.id, notes=notes)
     db.add(customer)
+    db.flush()
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.CUSTOMER_CREATED,
+        resource_type="customer",
+        resource_id=customer.id,
+        # The person's name, not their contact details: enough to know who was
+        # added without copying personal data into a table nobody can edit.
+        metadata={"customer": user.full_name},
+    )
     db.commit()
     db.refresh(customer)
     return customer
@@ -171,6 +185,7 @@ def update_customer(
     organization_id: uuid.UUID,
     customer_id: uuid.UUID,
     *,
+    actor_user_id: uuid.UUID,
     notes: str | None = None,
     first_name: str | None = None,
     last_name: str | None = None,
@@ -186,6 +201,30 @@ def update_customer(
         customer.user.last_name = last_name.strip()
     if phone is not None:
         customer.user.phone = phone or None
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.CUSTOMER_UPDATED,
+        resource_type="customer",
+        resource_id=customer.id,
+        # Which fields changed, never the values - a phone number does not
+        # belong in an append-only table.
+        metadata={
+            "customer": customer.user.full_name,
+            "fields": ", ".join(
+                name
+                for name, changed in (
+                    ("notes", update_notes),
+                    ("first_name", first_name is not None),
+                    ("last_name", last_name is not None),
+                    ("phone", phone is not None),
+                )
+                if changed
+            )
+            or "none",
+        },
+    )
     db.commit()
     db.refresh(customer)
     return customer

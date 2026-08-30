@@ -25,6 +25,7 @@ from serviceflow.db.models.enums import BookingStatus, JobStatus
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
+from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
 from serviceflow.services.availability import (
     DateOverride,
@@ -119,7 +120,10 @@ class Schedule:
     def pick(
         self, rng: random.Random, candidates: list[Employee], start: datetime, end: datetime
     ) -> Employee | None:
-        order = sorted(candidates, key=lambda e: str(e.id))
+        # Sorted by a *natural* key, not by id: primary keys are fresh UUIDs on
+        # every rebuild, so ordering by them would hand rng.shuffle a different
+        # starting list each time and the "fixed seed" would reproduce nothing.
+        order = sorted(candidates, key=lambda e: e.user.email)
         rng.shuffle(order)
         for employee in order:
             if self.free(employee, start, end):
@@ -184,7 +188,10 @@ def _add_job(
 def _vehicles_by_customer(db: Session, org: Organization) -> dict[uuid.UUID, list[Vehicle]]:
     pairs: dict[uuid.UUID, list[Vehicle]] = {}
     for vehicle in db.scalars(
-        select(Vehicle).where(Vehicle.organization_id == org.id, Vehicle.archived_at.is_(None))
+        select(Vehicle)
+        .where(Vehicle.organization_id == org.id, Vehicle.archived_at.is_(None))
+        # Ordered by natural attributes so a rebuild walks them the same way.
+        .order_by(Vehicle.license_plate)
     ):
         pairs.setdefault(vehicle.customer_id, []).append(vehicle)
     return pairs
@@ -306,8 +313,17 @@ def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[st
     ) >= BOOKING_COUNT:
         return {"bookings": 0, "jobs": 0}
 
-    services = list(db.scalars(select(Service).where(Service.organization_id == org.id)))
-    employees = list(db.scalars(select(Employee).where(Employee.organization_id == org.id)))
+    services = list(
+        db.scalars(select(Service).where(Service.organization_id == org.id).order_by(Service.name))
+    )
+    employees = list(
+        db.scalars(
+            select(Employee)
+            .where(Employee.organization_id == org.id)
+            .join(Employee.user)
+            .order_by(User.email)
+        )
+    )
     vehicles_by_customer = _vehicles_by_customer(db, org)
     owners = [
         owner

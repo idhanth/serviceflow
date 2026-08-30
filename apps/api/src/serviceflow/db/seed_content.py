@@ -69,7 +69,9 @@ def seed_job_content(db: Session, org: Organization, rng: random.Random) -> dict
         db.scalars(
             select(Job)
             .where(Job.organization_id == org.id, Job.status == JobStatus.COMPLETED)
-            .order_by(Job.scheduled_start.desc())
+            # Ties on the timestamp would otherwise resolve differently on each
+            # rebuild, changing which jobs get content.
+            .order_by(Job.scheduled_start.desc(), Job.scheduled_end.desc())
             .limit(JOBS_WITH_CONTENT)
         )
     )

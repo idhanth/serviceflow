@@ -12,7 +12,10 @@ from serviceflow.db.models import Base  # imports every model for autogenerate
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which would switch off every
+    # logger the application has already created - including the access log -
+    # whenever migrations run in-process (the test suite does exactly that).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", str(get_settings().database_url))
 target_metadata = Base.metadata

@@ -12,7 +12,9 @@ from sqlalchemy.orm import InstrumentedAttribute, Session, selectinload
 
 from serviceflow.core.errors import NotFound, ValidationFailed
 from serviceflow.core.pagination import Page, PageParams, SortSpec
+from serviceflow.db.models.enums import AuditAction
 from serviceflow.db.models.service import Service
+from serviceflow.services import audit
 from serviceflow.services.search import like_pattern
 
 
@@ -83,6 +85,7 @@ def create_service(
     base_price: Decimal,
     duration_minutes: int,
     image_url: str | None = None,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Service:
     service = Service(
         organization_id=organization_id,
@@ -94,6 +97,18 @@ def create_service(
     )
     db.add(service)
     try:
+        # The flush is inside the try because the unique name constraint fires
+        # here, not at commit, now that the audit row needs the service's id.
+        db.flush()
+        audit.record(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor_user_id,
+            action=AuditAction.SERVICE_CREATED,
+            resource_type="service",
+            resource_id=service.id,
+            metadata={"name": service.name, "duration_minutes": service.duration_minutes},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -111,12 +126,27 @@ def update_service(
     service_id: uuid.UUID,
     *,
     changes: dict[str, object],
+    actor_user_id: uuid.UUID | None = None,
 ) -> Service:
     service = get_service(db, organization_id, service_id)
     for field, value in changes.items():
         setattr(
             service, field, value.strip() if field == "name" and isinstance(value, str) else value
         )
+
+    audit.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=(
+            AuditAction.SERVICE_RETIRED
+            if changes.get("active") is False
+            else AuditAction.SERVICE_UPDATED
+        ),
+        resource_type="service",
+        resource_id=service.id,
+        metadata={"name": service.name, "changed": sorted(changes)},
+    )
     try:
         db.commit()
     except IntegrityError as exc:
@@ -129,10 +159,22 @@ def update_service(
     return service
 
 
-def deactivate_service(db: Session, organization_id: uuid.UUID, service_id: uuid.UUID) -> Service:
+def deactivate_service(
+    db: Session,
+    organization_id: uuid.UUID,
+    service_id: uuid.UUID,
+    *,
+    actor_user_id: uuid.UUID | None = None,
+) -> Service:
     """Soft delete.
 
     Bookings and jobs will reference services from Phase 3 onward, so removing the
     row would destroy history. Deactivating hides it from new bookings instead.
     """
-    return update_service(db, organization_id, service_id, changes={"active": False})
+    return update_service(
+        db,
+        organization_id,
+        service_id,
+        changes={"active": False},
+        actor_user_id=actor_user_id,
+    )

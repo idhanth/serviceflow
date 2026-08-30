@@ -58,6 +58,13 @@ celery_app.conf.update(
             "task": "serviceflow.queue_appointment_reminders",
             "schedule": 300.0,
         },
+        # Idempotency keys are kept for 24 hours; this is what enforces that.
+        # Hourly is ample - the retention window is a day, and each run deletes
+        # in bounded batches.
+        "purge-expired-idempotency-keys": {
+            "task": "serviceflow.purge_expired_idempotency_keys",
+            "schedule": 3600.0,
+        },
     },
 )
 

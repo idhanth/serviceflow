@@ -312,3 +312,47 @@ export interface SearchResult {
   subtitle: string;
   href: string;
 }
+
+export type AuditAction =
+  | "BOOKING_CREATED"
+  | "BOOKING_CONFIRMED"
+  | "BOOKING_REJECTED"
+  | "BOOKING_RESCHEDULED"
+  | "BOOKING_CANCELLED"
+  | "JOB_ASSIGNED"
+  | "JOB_REASSIGNED"
+  | "JOB_STARTED"
+  | "JOB_COMPLETED"
+  | "JOB_CANCELLED"
+  | "NOTE_ADDED"
+  | "NOTE_DELETED"
+  | "PHOTO_DELETED"
+  | "CUSTOMER_CREATED"
+  | "CUSTOMER_UPDATED"
+  | "EMPLOYEE_CREATED"
+  | "EMPLOYEE_UPDATED"
+  | "EMPLOYEE_DEACTIVATED"
+  | "EMPLOYEE_REACTIVATED"
+  | "SERVICE_CREATED"
+  | "SERVICE_UPDATED"
+  | "SERVICE_RETIRED"
+  | "VEHICLE_ARCHIVED"
+  | "AVAILABILITY_UPDATED"
+  | "AVAILABILITY_OVERRIDE_SET"
+  | "AVAILABILITY_OVERRIDE_REMOVED";
+
+/** One entry in the append-only audit trail. */
+export interface AuditEntry {
+  id: string;
+  action: AuditAction;
+  actor_name: string;
+  resource_type: string;
+  resource_id: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AuditActor {
+  id: string;
+  full_name: string;
+}
