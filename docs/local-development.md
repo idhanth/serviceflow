@@ -18,6 +18,8 @@ Redis 6380), so `.env` works unchanged with either.
 | Redis | 8.10.1 | micromamba env `serviceflow` |
 | MinIO | RELEASE.2025-09-07 | `~/.local/opt/minio` (S3-compatible object storage) |
 | MailPit | 1.31.0 | `~/.local/opt/mailpit` (SMTP capture, mailbox at :8025) |
+| Playwright | 1.62.1 | `apps/web/node_modules`; browsers in `~/Library/Caches/ms-playwright` |
+| k6 | 1.4.0 | `~/.local/opt/k6` (load testing) |
 
 `source scripts/env.sh` puts all of it on `PATH`.
 
@@ -189,6 +191,69 @@ headers, cookies, presigned S3 signatures and provider keys are never logged -
 the formatter redacts credential-shaped keys as a backstop, and call sites do not
 pass them in the first place. Correlation follows work into Celery, so the
 request that caused an email and the task that sent it share one `request_id`.
+
+## End-to-end tests
+
+```bash
+./scripts/services.sh start     # Postgres, Redis, MinIO, MailPit
+./scripts/e2e.sh                # whole suite
+./scripts/e2e.sh 02-customer    # one spec, or any Playwright filter
+E2E_KEEP=1 ./scripts/e2e.sh     # leave the servers running afterwards
+```
+
+The script starts whatever is missing (API, Celery worker, a production build of
+the web app), clears the `sf:rl:*` rate-limit counters, and stops only what it
+started. First run needs the browser:
+
+```bash
+cd apps/web && npx playwright install chromium
+```
+
+Everything is real: uploads go to MinIO through a presigned POST, emails land in
+MailPit, realtime arrives over SSE, and the rate limiters stay switched on - one
+spec trips the sign-up limit on purpose. A run signs in three times (admin,
+employee, the seeded demo customer) and signs up one fresh customer whose
+surname carries the run id, so a run never acts on data an earlier one left.
+
+Failures leave a trace: `npx playwright show-trace test-results/<name>/trace.zip`.
+
+The suite adds bookings to the development database as it goes. To get back to
+the exact demo state:
+
+```bash
+cd apps/api && uv run python -m serviceflow.db.seed   # tops up
+# or, for a clean slate:
+psql -h 127.0.0.1 -p $PGPORT -d postgres -c "DROP DATABASE serviceflow;" \
+  -c "CREATE DATABASE serviceflow;"
+uv run alembic upgrade head && uv run python -m serviceflow.db.seed
+```
+
+## Load tests
+
+k6 lives at `~/.local/opt/k6/k6`. Runs go against an isolated database, never
+the demo one:
+
+```bash
+./scripts/load.sh reset                  # build and seed serviceflow_load
+./scripts/load.sh read-heavy 100 60s
+./scripts/load.sh write-heavy 100 60s
+./scripts/load.sh mixed 100 60s
+./scripts/load.sh invariants             # what must still be true afterwards
+./scripts/load.sh stop                   # shut the load API down
+```
+
+Summaries are written to `load/results/`. Pool sizing and worker count are part
+of what a run measures:
+
+```bash
+LOAD_WORKERS=4 LOAD_POOL_SIZE=20 LOAD_MAX_OVERFLOW=4 ./scripts/load.sh read-heavy 500 60s
+```
+
+**This machine is the limit, not the application.** PostgreSQL here allows 100
+connections in total, shared by the load API, the development API, the worker
+and any psql session. Stop the development API and worker before a 500-user run,
+or the numbers measure contention for connections. Measured results and what
+they mean are in [ADR 0008](adr-0008-quality-strategy.md) and the README.
 
 ## Checks
 

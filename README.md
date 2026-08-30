@@ -4,12 +4,11 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 7 of 10 complete** — on top of real infrastructure (Celery
-workers, scheduled reminders, Server-Sent Events) the system now holds up when
-things go wrong: a resubmitted booking cannot become two, every change to a
-booking, job, employee or service is recorded in a table PostgreSQL will not let
-anyone edit, abuse-prone endpoints are limited atomically in Redis, and failures
-return a request id instead of a stack trace. See [Roadmap](#roadmap).
+**Status: Phase 8 of 10 complete** — the product is now backed by evidence
+rather than assertion: 28 Playwright tests drive the real browser through the
+customer, admin and employee journeys; 81 tests hold real threads against real
+PostgreSQL and Redis; failure tests break real dependencies; and the load
+numbers below were measured, not hoped for. See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -142,8 +141,23 @@ Three decisions worth knowing up front:
 ## Testing
 
 ```bash
-cd apps/api && uv run pytest        # 478 tests
+cd apps/api && uv run pytest        # 538 tests, ~90s
+cd apps/web && npx tsc --noEmit     # types
+./scripts/e2e.sh                    # 28 Playwright tests against the real stack
+./scripts/load.sh mixed 100 60s     # k6, against an isolated load database
 ```
+
+The suite is shaped like a pyramid and each layer answers a different question
+([ADR 0008](docs/adr-0008-quality-strategy.md)):
+
+| Layer | What it proves | Where |
+| --- | --- | --- |
+| Unit | Windows, transitions, ranking, validation, timezones | `tests/test_units.py`, `test_state_machine.py`, `test_availability_logic.py` |
+| Integration | Routes, services, tenant isolation, transactions | most of `apps/api/tests` |
+| Concurrency & stress | 81 tests: races, contention, idempotency, limiter | `test_concurrency.py`, `test_stress_*.py` |
+| Failure | Dependencies breaking, and recovering | `test_failure_paths.py`, `test_rate_limiting.py`, `test_email_delivery.py` |
+| End-to-end | The product, in a browser, for all three roles | `apps/web/e2e` |
+| Load | What it does under 100 and 500 concurrent users | `load/`, `scripts/load.sh` |
 
 Infrastructure is exercised, not mocked: photo tests upload to MinIO for real,
 email tests deliver over SMTP to MailPit and assert against its mailbox, realtime
@@ -161,18 +175,54 @@ detection (adjacent, contained, partial), availability and override precedence,
 timezone and daylight-saving boundaries, deterministic ranking — and the
 concurrency suite below.
 
-**Concurrency (PRD 52).** Real threads against real PostgreSQL, released from a
-shared barrier so the race actually happens:
+**Concurrency and stress (PRD 52).** Real threads against real PostgreSQL and
+real Redis, released from a shared barrier so the race actually happens:
 
 ```bash
-uv run pytest tests/test_concurrency.py tests/test_idempotency.py    # 49 tests
+uv run pytest -m "concurrency or stress"    # 81 tests
 ```
 
-Simultaneous overlapping assignments leave exactly one winner; simultaneous
-adjacent ones all succeed; the same applies to concurrent reassignment and
-reschedule. Concurrent requests carrying one idempotency key create exactly one
-booking, and thirty simultaneous requests against a limit of ten leave exactly
-ten allowed — proved against real Redis, not a stub.
+Twelve simultaneous overlapping confirmations leave exactly one winner and
+eleven clean refusals; six adjacent ones all succeed; four employees under
+twelve bidders end up with exactly four jobs and no overlap. Twenty callers
+sharing one idempotency key produce one booking, one audit entry and one
+notification — not twenty. A hundred callers against a limit of twenty leave
+exactly twenty allowed.
+
+**End-to-end (PRD 53).** Playwright drives the real browser against the real
+stack — PostgreSQL, Redis, MinIO, MailPit and a Celery worker, none of them
+mocked. A photo upload in these tests is a presigned POST to MinIO followed by
+the API verifying the stored object; an email assertion reads MailPit's mailbox.
+
+```bash
+./scripts/services.sh start && ./scripts/e2e.sh
+```
+
+The cross-role test follows one booking from a customer's request, through an
+admin's confirmation, to an employee starting, photographing and finishing the
+work — then checks the customer sees the visible note and never the internal
+one, that the email arrived, and that the admin's Activity feed tells the whole
+story.
+
+**Load (PRD 54).** k6 against an isolated `serviceflow_load` database, so a run
+cannot touch the demo data. Measured on one laptop — a single PostgreSQL with
+`max_connections = 100`, with the API, the database and k6 all sharing it:
+
+| Scenario | Concurrency | Throughput | p50 | p95 | p99 | Errors |
+| --- | --- | --- | --- | --- | --- | --- |
+| Read-heavy | 100 | 367 req/s | 250 ms | 331 ms | 376 ms | 0% |
+| Mixed | 100 | 302 req/s | 277 ms | 513 ms | 640 ms | 0% |
+| Write-heavy | 100 | 48 req/s | 442 ms | 5.4 s | 10.3 s | 4.2% |
+| Read-heavy | 500 | 490 req/s | 94 ms | 5.2 s | 15.2 s | 75% (shed as 503) |
+
+At 100 concurrent users the system is comfortable. At 500 this machine is not —
+`max_connections` is the ceiling, not the application — and what it does instead
+is refuse the excess with `503` and `Retry-After` while staying correct. After
+every run, `load/invariants.sql` asks the database whether any idempotency key
+produced two bookings, whether any confirmed booking lacks exactly one job,
+whether any employee was double-booked and whether anything crossed a tenant
+boundary. After 3,834 bookings created under load: all zero, and 3,834 keys
+mapping to 3,834 distinct bookings.
 
 ## Roadmap
 
@@ -185,8 +235,8 @@ ten allowed — proved against real Redis, not a stub.
 | 5 | Photos, notes, search, filtering, notifications | done |
 | 6 | Redis, Celery, email, realtime | done |
 | 7 | Idempotency, audit logs, rate limiting, observability | done |
-| 8 | Integration, E2E, concurrency and load tests | next |
-| 9 | UI polish, responsive, dark mode | |
+| 8 | Integration, E2E, concurrency and load tests | done |
+| 9 | UI polish, responsive, dark mode | next |
 | 10 | CI/CD, production infrastructure, monitoring | |
 
 Full specification: [docs/PRD.md](docs/PRD.md).

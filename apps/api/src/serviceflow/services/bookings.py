@@ -128,8 +128,16 @@ def get_booking(
     *,
     roles: frozenset[Role],
     user_id: uuid.UUID,
+    for_update: bool = False,
 ) -> Booking:
-    booking = load_booking(db, organization_id, booking_id)
+    """Tenant- and role-checked load.
+
+    `for_update` is for the call sites that go on to change the booking. Without
+    it a cancellation can read the booking while a confirmation is still in
+    flight, decide there is no job to cancel, and commit - leaving a cancelled
+    booking holding a live job. Locking makes the two serialise.
+    """
+    booking = load_booking(db, organization_id, booking_id, for_update=for_update)
 
     if Role.ADMIN not in roles:
         if Role.CUSTOMER not in roles:
@@ -559,7 +567,11 @@ def reject_booking(
     user_id: uuid.UUID,
     admin_notes: str | None = None,
 ) -> Booking:
-    booking = get_booking(db, organization_id, booking_id, roles=roles, user_id=user_id)
+    # Locked for the same reason cancellation is: a rejection racing a
+    # confirmation must serialise, not interleave.
+    booking = get_booking(
+        db, organization_id, booking_id, roles=roles, user_id=user_id, for_update=True
+    )
     transition_booking(booking, BookingStatus.REJECTED)
     if admin_notes is not None:
         booking.admin_notes = admin_notes
@@ -601,7 +613,9 @@ def cancel_booking(
     Refused once the work has started: a job that is in progress or finished
     cannot be cancelled (PRD 12), so neither can its booking.
     """
-    booking = get_booking(db, organization_id, booking_id, roles=roles, user_id=user_id)
+    booking = get_booking(
+        db, organization_id, booking_id, roles=roles, user_id=user_id, for_update=True
+    )
 
     job = booking.job
     if job is not None and job.status is not JobStatus.CANCELLED:

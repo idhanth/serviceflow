@@ -4,7 +4,7 @@
 export SERVICEFLOW_ROOT="${SERVICEFLOW_ROOT:-$HOME/serviceflow}"
 export MAMBA_ROOT_PREFIX="$HOME/.local/opt/micromamba/root"
 export SERVICEFLOW_SERVICES_BIN="$MAMBA_ROOT_PREFIX/envs/serviceflow/bin"
-export PATH="$HOME/.local/bin:$HOME/.local/opt/node/bin:$HOME/.local/opt/minio/bin:$HOME/.local/opt/mailpit:$SERVICEFLOW_SERVICES_BIN:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.local/opt/node/bin:$HOME/.local/opt/minio/bin:$HOME/.local/opt/mailpit:$HOME/.local/opt/k6:$SERVICEFLOW_SERVICES_BIN:$PATH"
 
 # Local dev service coordinates (see scripts/services.sh)
 export PGHOST=127.0.0.1

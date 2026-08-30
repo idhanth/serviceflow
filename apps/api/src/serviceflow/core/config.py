@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     )
     database_pool_size: int = 10
     database_max_overflow: int = 20
+    # Seconds to wait for a pooled connection before returning 503. Short on
+    # purpose; see the comment in db/session.py.
+    database_pool_timeout: int = 5
     database_echo: bool = False
 
     redis_url: RedisDsn = Field(default=...)

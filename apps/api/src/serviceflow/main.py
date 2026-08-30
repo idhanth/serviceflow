@@ -10,6 +10,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from serviceflow.api.middleware import RequestContextMiddleware
@@ -67,6 +69,25 @@ def _error_response(
     )
 
 
+# What PostgreSQL says when it cannot give us a connection. These are capacity
+# and availability problems, not faults in the request that happened to arrive.
+_CONNECTION_FAILURES = (
+    "too many clients",
+    "connection failed",
+    "server closed the connection",
+    "could not connect",
+    "the connection is closed",
+    "connection is bad",
+)
+
+
+def _is_connection_failure(exc: OperationalError) -> bool:
+    if exc.connection_invalidated:
+        return True
+    text = str(exc.orig or exc).lower()
+    return any(marker in text for marker in _CONNECTION_FAILURES)
+
+
 def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
@@ -91,6 +112,44 @@ def _register_exception_handlers(app: FastAPI) -> None:
             request,
             {"fields": fields},
         )
+
+    def _at_capacity(request: Request, reason: str) -> JSONResponse:
+        """Congestion is not a defect, and must not be reported as one.
+
+        Returning 500 tells a client the request can never work, which invites
+        an immediate retry into a queue that is already too long. 503 with
+        Retry-After tells it the truth - the server is full right now.
+        Both cases below were found by load testing, not by reasoning.
+        """
+        logger.warning(
+            "refusing work at capacity",
+            extra={"path": request.url.path, "method": request.method, "reason": reason},
+        )
+        return _error_response(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "We're handling more requests than usual. Please try again in a moment.",
+            request,
+            {"retry_after": 5},
+            {"Retry-After": "5"},
+        )
+
+    @app.exception_handler(SQLAlchemyTimeoutError)
+    async def _pool_exhausted(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+        """Every pooled connection is busy and this caller waited its turn out."""
+        return _at_capacity(request, "pool exhausted")
+
+    @app.exception_handler(OperationalError)
+    async def _database_unreachable(request: Request, exc: OperationalError) -> JSONResponse:
+        """The database refused or dropped the connection.
+
+        Narrow on purpose: only failures to obtain a usable connection are
+        treated as congestion. A query that fails for any other reason is still
+        an unhandled error, because it is one.
+        """
+        if not _is_connection_failure(exc):
+            raise exc
+        return _at_capacity(request, "database connection unavailable")
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:

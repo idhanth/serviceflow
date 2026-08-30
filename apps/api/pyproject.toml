@@ -64,5 +64,6 @@ addopts = "-q --strict-markers"
 markers = [
     "concurrency: tests that exercise race conditions",
     "celery: tests that need a real Celery worker and Redis broker",
+    "stress: sustained contention - many callers at once, slower than the rest",
 ]
 asyncio_mode = "auto"

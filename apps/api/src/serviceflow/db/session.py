@@ -22,6 +22,12 @@ def get_engine() -> Engine:
             str(settings.database_url),
             pool_size=settings.database_pool_size,
             max_overflow=settings.database_max_overflow,
+            # Wait briefly for a connection, then give up. SQLAlchemy's default
+            # is 30 seconds, which under saturation holds a worker thread for
+            # half a minute per waiting request - the server starves itself of
+            # threads and throughput collapses rather than degrading. Failing
+            # fast frees the thread and lets the caller be told to retry.
+            pool_timeout=settings.database_pool_timeout,
             pool_pre_ping=True,
             echo=settings.database_echo,
             future=True,
