@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -23,9 +24,16 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from serviceflow.auth.passwords import hash_password  # noqa: E402
 from serviceflow.db.models import Base  # noqa: E402
+from serviceflow.db.models.booking import Booking  # noqa: E402
 from serviceflow.db.models.customer import Customer  # noqa: E402
 from serviceflow.db.models.employee import Employee  # noqa: E402
-from serviceflow.db.models.enums import MembershipStatus, Role  # noqa: E402
+from serviceflow.db.models.enums import (  # noqa: E402
+    BookingStatus,
+    JobStatus,
+    MembershipStatus,
+    Role,
+)
+from serviceflow.db.models.job import Job  # noqa: E402
 from serviceflow.db.models.membership import OrganizationMembership  # noqa: E402
 from serviceflow.db.models.organization import Organization  # noqa: E402
 from serviceflow.db.models.service import Service  # noqa: E402
@@ -235,3 +243,87 @@ def make_vehicle(
     db.add(vehicle)
     db.commit()
     return vehicle
+
+
+# ---------------------------------------------------------------- phase 3 factories
+
+
+def future_start(days: int = 3, hour: int = 10) -> datetime:
+    """A deterministic aware datetime safely in the future."""
+    base = datetime.now(UTC) + timedelta(days=days)
+    return base.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+def make_booking(
+    db: Session,
+    organization: Organization,
+    customer: Customer,
+    vehicle: Vehicle,
+    service: Service,
+    *,
+    start: datetime | None = None,
+    status: BookingStatus = BookingStatus.PENDING,
+    customer_notes: str | None = None,
+) -> Booking:
+    start = start or future_start()
+    booking = Booking(
+        organization_id=organization.id,
+        customer_id=customer.id,
+        vehicle_id=vehicle.id,
+        service_id=service.id,
+        requested_start=start,
+        requested_end=start + timedelta(minutes=service.duration_minutes),
+        status=status,
+        customer_notes=customer_notes,
+    )
+    db.add(booking)
+    db.commit()
+    return booking
+
+
+def make_job(
+    db: Session,
+    organization: Organization,
+    booking: Booking,
+    employee: Employee,
+    *,
+    status: JobStatus = JobStatus.ASSIGNED,
+) -> Job:
+    job = Job(
+        organization_id=organization.id,
+        booking_id=booking.id,
+        employee_id=employee.id,
+        scheduled_start=booking.requested_start,
+        scheduled_end=booking.requested_end,
+        status=status,
+    )
+    db.add(job)
+    db.commit()
+    return job
+
+
+def booking_setup(db: Session, organization: Organization) -> dict:
+    """A customer with a vehicle, a service, and an employee qualified for it.
+
+    Emails are suffixed because users are globally unique: a test that builds two
+    organizations calls this twice.
+    """
+    tag = uuid.uuid4().hex[:8]
+    service = make_service(db, organization, name="Full Detail", duration_minutes=150)
+    customer = make_customer(
+        db, organization, email=f"booker-{tag}@example.com", first_name="Booker"
+    )
+    vehicle = make_vehicle(db, organization, customer)
+    employee = make_employee(db, organization, email=f"tech-{tag}@example.com", services=[service])
+    user = db.get(User, customer.user_id)
+    assert user is not None
+    employee_user = db.get(User, employee.user_id)
+    assert employee_user is not None
+    return {
+        "service": service,
+        "customer": customer,
+        "customer_user": user,
+        "vehicle": vehicle,
+        "employee": employee,
+        "employee_user": employee_user,
+    }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +34,13 @@ export default async function LoginPage() {
         </Card>
 
         <DemoAccounts />
+
+        <p className="text-center text-sm text-muted-foreground">
+          New customer?{" "}
+          <Link href="/signup" className="font-medium text-foreground hover:underline">
+            Create an account
+          </Link>
+        </p>
       </div>
     </main>
   );

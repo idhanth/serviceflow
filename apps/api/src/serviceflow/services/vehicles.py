@@ -7,6 +7,7 @@ their organization, a customer only on their own vehicles (PRD 6).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -57,7 +58,7 @@ def list_vehicles(
         db, organization_id, roles=roles, user_id=user_id, customer_id=customer_id
     )
 
-    filters = [Vehicle.organization_id == organization_id]
+    filters = [Vehicle.organization_id == organization_id, Vehicle.archived_at.is_(None)]
     if scope is not None:
         filters.append(Vehicle.customer_id == scope)
     if q:
@@ -92,10 +93,20 @@ def get_vehicle(
     *,
     roles: frozenset[Role],
     user_id: uuid.UUID,
+    include_archived: bool = False,
 ) -> Vehicle:
+    """Load a vehicle the caller may see.
+
+    `include_archived` is for records that reference a vehicle historically - a
+    booking or job still has to render the car it was for.
+    """
+    filters = [Vehicle.id == vehicle_id, Vehicle.organization_id == organization_id]
+    if not include_archived:
+        filters.append(Vehicle.archived_at.is_(None))
+
     vehicle = db.scalar(
         select(Vehicle)
-        .where(Vehicle.id == vehicle_id, Vehicle.organization_id == organization_id)
+        .where(*filters)
         .options(joinedload(Vehicle.customer).joinedload(Customer.user))
     )
     if vehicle is None:
@@ -169,14 +180,24 @@ def update_vehicle(
     return vehicle
 
 
-def delete_vehicle(
+def archive_vehicle(
     db: Session,
     organization_id: uuid.UUID,
     vehicle_id: uuid.UUID,
     *,
     roles: frozenset[Role],
     user_id: uuid.UUID,
-) -> None:
-    vehicle = get_vehicle(db, organization_id, vehicle_id, roles=roles, user_id=user_id)
-    db.delete(vehicle)
-    db.commit()
+) -> Vehicle:
+    """Archive rather than delete, so bookings and jobs keep their vehicle.
+
+    Archiving is idempotent: archiving an already-archived vehicle is a no-op
+    rather than an error, so a double-submitted request stays safe.
+    """
+    vehicle = get_vehicle(
+        db, organization_id, vehicle_id, roles=roles, user_id=user_id, include_archived=True
+    )
+    if vehicle.archived_at is None:
+        vehicle.archived_at = datetime.now(UTC)
+        db.commit()
+        db.refresh(vehicle)
+    return vehicle

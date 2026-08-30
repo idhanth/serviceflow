@@ -4,8 +4,10 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 2 of 10 complete** (foundation and auth, plus customers,
-employees, services and vehicles). See [Roadmap](#roadmap).
+**Status: Phase 3 of 10 complete** — the core workflow runs end to end: a
+customer signs up, books a service, an admin assigns a technician and confirms,
+and the employee starts and completes the job while the customer watches the
+status change. See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -49,9 +51,13 @@ Password for all three: `demo1234`
 | Employee | `employee@serviceflow.demo` |
 | Customer | `customer@serviceflow.demo` |
 
-The sign-in page has a one-click button for each. The seed also creates the
-organization's catalog and book of business: 6 services, 5 employees,
-75 customers and 100 vehicles (PRD 49).
+The sign-in page has a one-click button for each, and `/signup` creates a fresh
+customer account if you'd rather walk the flow from the beginning.
+
+The seed creates the organization's catalog and book of business: 6 services,
+5 employees, 75 customers, 100 vehicles, 250 bookings and 199 jobs (180 of them
+completed), per PRD 49. It is deterministic and idempotent — rerunning it
+changes nothing.
 
 ## Architecture
 
@@ -59,7 +65,7 @@ organization's catalog and book of business: 6 services, 5 employees,
 Next.js  ->  route handlers (/api/proxy)  ->  FastAPI  ->  service layer  ->  PostgreSQL
 ```
 
-Two decisions worth knowing up front:
+Three decisions worth knowing up front:
 
 - **The session token never reaches client JavaScript.** It is stored in an
   httpOnly cookie and attached server-side by the proxy route handler, so an XSS
@@ -68,17 +74,23 @@ Two decisions worth knowing up front:
   comes from a verified active membership. A caller can ask for an organization
   via `X-Organization-Id`, but a mismatch is refused, and a foreign organization
   is indistinguishable from a nonexistent one.
+- **A confirmed booking always has exactly one job.** The booking row is locked
+  for the confirmation transaction, the state machine refuses a second confirm,
+  and `jobs.booking_id` is unique — three independent guards, all tested
+  ([ADR 0003](docs/adr-0003-phase3-booking-workflow.md)).
 
 ## Testing
 
 ```bash
-cd apps/api && uv run pytest        # 71 tests
+cd apps/api && uv run pytest        # 119 tests
 ```
 
 Covering health probes, the auth envelope, tenant isolation (including
 cross-organization probing on every entity), per-organization role enforcement,
-the customer-vs-customer boundary, employee deactivation revoking access, and
-search, filtering and pagination.
+the customer-vs-customer boundary, employee deactivation revoking access, search,
+filtering and pagination — and for the workflow: server-derived booking windows,
+transactional job creation, repeated confirmation, rollback when confirmation
+fails, employee job scoping, and every legal and illegal state transition.
 
 ## Roadmap
 
@@ -86,8 +98,8 @@ search, filtering and pagination.
 | --- | --- | --- |
 | 1 | Foundation: repo, auth, organizations, roles, migrations | done |
 | 2 | Customers, employees, services, vehicles | done |
-| 3 | Booking workflow, assignment, job lifecycle | next |
-| 4 | Availability, conflict detection, transaction safety, calendar | |
+| 3 | Booking workflow, assignment, job lifecycle | done |
+| 4 | Availability, conflict detection, transaction safety, calendar | next |
 | 5 | Photos, notes, search, filtering, notifications | |
 | 6 | Redis, Celery, email, realtime | |
 | 7 | Idempotency, audit logs, rate limiting | |

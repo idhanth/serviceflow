@@ -110,3 +110,83 @@ export interface Vehicle {
   owner: VehicleOwner | null;
   created_at: string;
 }
+
+// ---------------------------------------------------------------- phase 3
+
+export type BookingStatus = "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED";
+export type JobStatus = "ASSIGNED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+
+export interface BookingVehicle {
+  id: string;
+  display_name: string;
+  license_plate: string | null;
+  color: string | null;
+}
+
+export interface BookingService {
+  id: string;
+  name: string;
+  duration_minutes: number;
+  base_price: string;
+}
+
+export interface BookingCustomer {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+}
+
+export interface BookingJobSummary {
+  id: string;
+  status: JobStatus;
+  scheduled_start: string;
+  scheduled_end: string;
+  started_at: string | null;
+  completed_at: string | null;
+  employee_name: string;
+}
+
+export interface Booking {
+  id: string;
+  status: BookingStatus;
+  requested_start: string;
+  requested_end: string;
+  customer_notes: string | null;
+  admin_notes: string | null;
+  vehicle: BookingVehicle;
+  service: BookingService;
+  customer: BookingCustomer | null;
+  job: BookingJobSummary | null;
+  created_at: string;
+}
+
+export interface AssignableEmployee {
+  id: string;
+  full_name: string;
+  job_title: string;
+  active: boolean;
+}
+
+export interface JobEmployee {
+  id: string;
+  full_name: string;
+  job_title: string;
+}
+
+export interface Job {
+  id: string;
+  booking_id: string;
+  status: JobStatus;
+  scheduled_start: string;
+  scheduled_end: string;
+  started_at: string | null;
+  completed_at: string | null;
+  internal_notes: string | null;
+  employee: JobEmployee;
+  customer: BookingCustomer;
+  vehicle: BookingVehicle;
+  service: BookingService;
+  customer_notes: string | null;
+  created_at: string;
+}

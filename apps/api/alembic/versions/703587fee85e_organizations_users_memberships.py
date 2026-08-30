@@ -153,3 +153,8 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_organizations_slug"), table_name="organizations")
     op.drop_table("organizations")
     # ### end Alembic commands ###
+
+    # Autogenerate does not drop the enum types it created, which would make a
+    # downgrade/re-upgrade cycle fail with "type already exists".
+    sa.Enum(name="membership_status").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="role").drop(op.get_bind(), checkfirst=True)

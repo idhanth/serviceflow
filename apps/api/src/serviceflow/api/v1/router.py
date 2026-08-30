@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from serviceflow.api.v1 import auth, customers, employees, organizations, services, vehicles
+from serviceflow.api.v1 import (
+    auth,
+    bookings,
+    customers,
+    employees,
+    jobs,
+    organizations,
+    services,
+    vehicles,
+)
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -11,3 +20,5 @@ api_router.include_router(customers.router)
 api_router.include_router(employees.router)
 api_router.include_router(services.router)
 api_router.include_router(vehicles.router)
+api_router.include_router(bookings.router)
+api_router.include_router(jobs.router)

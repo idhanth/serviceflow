@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, status
 
 from serviceflow.api.deps import ActiveUser, DbSession
 from serviceflow.core.pagination import Pagination
@@ -109,13 +109,22 @@ def update_vehicle(
     )
 
 
-@router.delete("/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove a vehicle")
-def delete_vehicle(vehicle_id: uuid.UUID, current_user: ActiveUser, db: DbSession) -> Response:
-    vehicles_service.delete_vehicle(
+@router.delete(
+    "/{vehicle_id}",
+    response_model=DataResponse[VehicleRead],
+    summary="Archive a vehicle (soft delete)",
+)
+def archive_vehicle(
+    vehicle_id: uuid.UUID, current_user: ActiveUser, db: DbSession
+) -> DataResponse[VehicleRead]:
+    """Archives rather than deletes: bookings and jobs reference vehicles."""
+    vehicle = vehicles_service.archive_vehicle(
         db,
         current_user.organization_id,
         vehicle_id,
         roles=current_user.roles,
         user_id=current_user.user_id,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return DataResponse[VehicleRead](
+        data=VehicleRead.from_model(vehicle, include_owner=current_user.has_role(Role.ADMIN))
+    )

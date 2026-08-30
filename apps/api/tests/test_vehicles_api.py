@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from serviceflow.db.models.enums import Role
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.user import User
+from serviceflow.db.models.vehicle import Vehicle
 from tests.conftest import auth_headers, make_customer, make_user, make_vehicle
 
 
@@ -155,14 +156,42 @@ def test_vehicle_search_and_year_validation(
     assert bad_year.json()["error"]["details"]["fields"]["year"]
 
 
-def test_deleting_a_vehicle_removes_it(
+def test_removing_a_vehicle_archives_it_rather_than_deleting(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
+    """Bookings and jobs reference vehicles, so the row has to survive."""
     customer = make_customer(db, organization)
     vehicle = make_vehicle(db, organization, customer)
     user = db.get(User, customer.user_id)
     assert user is not None
     headers = auth_headers(client, user)
 
-    assert client.delete(f"/api/v1/vehicles/{vehicle.id}", headers=headers).status_code == 204
+    response = client.delete(f"/api/v1/vehicles/{vehicle.id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["data"]["archived"] is True
+
+    # Gone from the customer's garage and no longer individually readable...
+    assert client.get("/api/v1/vehicles", headers=headers).json()["meta"]["total"] == 0
     assert client.get(f"/api/v1/vehicles/{vehicle.id}", headers=headers).status_code == 404
+
+    # ...but the row is still there for anything that references it.
+    db.expire_all()
+    stored = db.get(Vehicle, vehicle.id)
+    assert stored is not None
+    assert stored.archived_at is not None
+
+
+def test_archiving_is_idempotent(
+    client: TestClient, db: Session, organization: Organization
+) -> None:
+    """A double-submitted remove must not error."""
+    customer = make_customer(db, organization)
+    vehicle = make_vehicle(db, organization, customer)
+    user = db.get(User, customer.user_id)
+    assert user is not None
+    headers = auth_headers(client, user)
+
+    first = client.delete(f"/api/v1/vehicles/{vehicle.id}", headers=headers)
+    second = client.delete(f"/api/v1/vehicles/{vehicle.id}", headers=headers)
+    assert first.status_code == second.status_code == 200
+    assert second.json()["data"]["archived"] is True

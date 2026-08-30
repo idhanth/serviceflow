@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -26,8 +26,10 @@ from serviceflow.schemas.auth import (
     LoginResponse,
     MembershipSummary,
     SessionUser,
+    SignupRequest,
 )
 from serviceflow.schemas.envelope import DataResponse
+from serviceflow.services import signup as signup_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -91,3 +93,41 @@ def me(current_user: ActiveUser, db: DbSession) -> DataResponse[SessionUser]:
     if user is None:
         raise Unauthorized()
     return DataResponse[SessionUser](data=_session_user(user))
+
+
+@router.post(
+    "/signup",
+    response_model=LoginResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a customer account (dev provider only)",
+)
+def signup(payload: SignupRequest, request: Request, db: DbSession) -> LoginResponse:
+    """Registers a customer and signs them straight in.
+
+    Not rate limited yet - that arrives with the rest of the abuse controls in
+    phase 7 (PRD 42).
+    """
+    provider = request.app.state.auth_provider
+    if not isinstance(provider, DevJWTAuthProvider):
+        raise Unauthorized("Sign-up is handled by the configured identity provider.")
+
+    user, _organization = signup_service.sign_up_customer(
+        db,
+        organization_slug=payload.organization_slug,
+        email=payload.email,
+        password=payload.password,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        phone=payload.phone,
+    )
+
+    loaded = _load_user_with_memberships(db, user_id=user.id)
+    if loaded is None:  # pragma: no cover - the row was just committed
+        raise Unauthorized()
+
+    settings = get_settings()
+    return LoginResponse(
+        access_token=provider.issue_token(loaded.auth_provider_id, email=loaded.email),
+        expires_in=settings.access_token_ttl_seconds,
+        user=_session_user(loaded),
+    )

@@ -17,14 +17,17 @@ from sqlalchemy.orm import Session
 
 from serviceflow.auth.passwords import hash_password
 from serviceflow.core.logging import configure_logging
+from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.employee import Employee
-from serviceflow.db.models.enums import MembershipStatus, Role
+from serviceflow.db.models.enums import JobStatus, MembershipStatus, Role
+from serviceflow.db.models.job import Job
 from serviceflow.db.models.membership import OrganizationMembership
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
 from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.db.seed_bookings import seed_bookings
 from serviceflow.db.seed_data import (
     COLORS,
     CUSTOMER_NOTES,
@@ -267,6 +270,7 @@ def seed(db: Session) -> None:
     roster = seed_employees(db, org, catalog)
     customers = seed_customers(db, org, rng)
     vehicles = seed_vehicles(db, org, rng)
+    workload = seed_bookings(db, org, rng)
 
     logger.info(
         "seed complete",
@@ -275,6 +279,8 @@ def seed(db: Session) -> None:
             "employees": len(roster),
             "customers_touched": len(customers),
             "vehicles_created": vehicles,
+            "bookings_created": workload["bookings"],
+            "jobs_created": workload["jobs"],
         },
     )
 
@@ -290,6 +296,11 @@ def main() -> None:
             "employees": db.scalar(select(func.count()).select_from(Employee)),
             "customers": db.scalar(select(func.count()).select_from(Customer)),
             "vehicles": db.scalar(select(func.count()).select_from(Vehicle)),
+            "bookings": db.scalar(select(func.count()).select_from(Booking)),
+            "jobs": db.scalar(select(func.count()).select_from(Job)),
+            "completed_jobs": db.scalar(
+                select(func.count()).select_from(Job).where(Job.status == JobStatus.COMPLETED)
+            ),
         }
 
     print(f"Seed complete. Demo logins (password: {DEMO_PASSWORD}):")

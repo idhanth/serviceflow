@@ -30,6 +30,7 @@ class VehicleRead(BaseModel):
     license_plate: str | None = None
     notes: str | None = None
     display_name: str
+    archived: bool = False
     owner: VehicleOwner | None = None
     created_at: datetime
 
@@ -45,6 +46,7 @@ class VehicleRead(BaseModel):
             license_plate=vehicle.license_plate,
             notes=vehicle.notes,
             display_name=vehicle.display_name,
+            archived=vehicle.archived,
             owner=(
                 VehicleOwner(
                     customer_id=vehicle.customer_id,
