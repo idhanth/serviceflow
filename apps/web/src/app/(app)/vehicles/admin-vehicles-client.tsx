@@ -4,12 +4,12 @@ import { Car, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmDialog } from "@/components/data/confirm-dialog";
+import { DataPanel, PanelFooter } from "@/components/data/data-panel";
 import { PageHeader } from "@/components/data/page-header";
 import { PaginationControls } from "@/components/data/pagination-controls";
 import { SearchInput } from "@/components/data/search-input";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,10 +73,10 @@ export function AdminVehiclesClient() {
         value={q}
         onChange={search}
         label="Search vehicles"
-        placeholder="Make, model, colour or plate..."
+        placeholder="Make, model, colour or plate"
       />
 
-      <Card className="overflow-hidden p-0">
+      <DataPanel>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -175,11 +175,12 @@ export function AdminVehiclesClient() {
             </TableBody>
           </Table>
         </div>
-      </Card>
-
-      {query.data ? (
-        <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="vehicles" />
-      ) : null}
+        {query.data && query.data.meta.total > 0 ? (
+          <PanelFooter>
+            <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="vehicles" />
+          </PanelFooter>
+        ) : null}
+      </DataPanel>
 
       <VehicleFormDialog
         open={formOpen}

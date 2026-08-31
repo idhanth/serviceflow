@@ -4,13 +4,13 @@ import { MoreHorizontal, Pencil, Plus, RotateCcw, Sparkles, Trash2 } from "lucid
 import { useState } from "react";
 
 import { ConfirmDialog } from "@/components/data/confirm-dialog";
+import { DataPanel, PanelFooter } from "@/components/data/data-panel";
 import { PageHeader } from "@/components/data/page-header";
 import { PaginationControls } from "@/components/data/pagination-controls";
 import { SearchInput } from "@/components/data/search-input";
 import { ActiveBadge } from "@/components/data/status-badge";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -89,10 +89,10 @@ export function ServicesClient() {
         value={q}
         onChange={search}
         label="Search services"
-        placeholder="Search services..."
+        placeholder="Search services"
       />
 
-      <Card className="overflow-hidden p-0">
+      <DataPanel>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -155,7 +155,7 @@ export function ServicesClient() {
                   <TableCell>
                     <div className="font-medium">{service.name}</div>
                     {service.description ? (
-                      <div className="line-clamp-1 max-w-md text-sm text-muted-foreground">
+                      <div className="line-clamp-1 max-w-lg text-[12px] text-muted-foreground">
                         {service.description}
                       </div>
                     ) : null}
@@ -221,11 +221,12 @@ export function ServicesClient() {
             </TableBody>
           </Table>
         </div>
-      </Card>
-
-      {query.data ? (
-        <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="services" />
-      ) : null}
+        {query.data && query.data.meta.total > 0 ? (
+          <PanelFooter>
+            <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="services" />
+          </PanelFooter>
+        ) : null}
+      </DataPanel>
 
       <ServiceFormDialog open={formOpen} onOpenChange={setFormOpen} service={editing} />
 

@@ -92,7 +92,7 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
           Back to jobs
         </Button>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{job.service.name}</h1>
+          <h1 className="text-[20px] font-semibold leading-tight tracking-[-0.015em]">{job.service.name}</h1>
           <JobStatusBadge status={job.status} />
         </div>
         <p className="text-sm text-muted-foreground">
@@ -102,11 +102,13 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="space-y-4 p-5 lg:col-span-2">
+      {/* items-start: each panel is as tall as its own content. Stretching
+          them to match left a completed job with a large empty box. */}
+      <div className="grid items-start gap-4 lg:grid-cols-3">
+        <Card className="space-y-5 p-5 lg:col-span-2">
           <section className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">Customer</h2>
+              <h2 className="text-[12px] text-muted-foreground">Customer</h2>
               <p className="flex items-center gap-2 font-medium">
                 <User className="size-4 text-muted-foreground" aria-hidden />
                 {job.customer.full_name}
@@ -130,7 +132,7 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
             </div>
 
             <div className="space-y-1">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">Vehicle</h2>
+              <h2 className="text-[12px] text-muted-foreground">Vehicle</h2>
               <p className="flex items-center gap-2 font-medium">
                 <Car className="size-4 text-muted-foreground" aria-hidden />
                 {job.vehicle.display_name}
@@ -146,7 +148,7 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
             <>
               <Separator />
               <section className="space-y-1.5">
-                <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
+                <h2 className="text-[12px] text-muted-foreground">
                   What the customer asked for
                 </h2>
                 <p className="whitespace-pre-wrap rounded-lg border p-3 text-sm">
@@ -156,20 +158,31 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
             </>
           ) : null}
 
-          <Separator />
-
-          <section className="space-y-2">
-            <Label htmlFor="completion-summary">Completion summary</Label>
-            <Textarea
-              id="completion-summary"
-              rows={3}
-              maxLength={2000}
-              value={notes}
-              disabled={job.status === "COMPLETED" || job.status === "CANCELLED"}
-              onChange={(event) => setNotes(event.target.value)}
-              placeholder="Saved against the job when you mark it complete. The customer never sees this."
-            />
-          </section>
+          {/* An empty, disabled field on a finished job is furniture. Once the
+              work is closed the summary is a record: show what was written, or
+              nothing at all. */}
+          {job.status === "COMPLETED" || job.status === "CANCELLED" ? (
+            notes ? (
+              <section className="space-y-1.5 border-t pt-5">
+                <h2 className="text-[12px] text-muted-foreground">Completion summary</h2>
+                <p className="whitespace-pre-wrap border-l-2 border-border pl-3 text-[13px]">
+                  {notes}
+                </p>
+              </section>
+            ) : null
+          ) : (
+            <section className="space-y-2 border-t pt-5">
+              <Label htmlFor="completion-summary">Completion summary</Label>
+              <Textarea
+                id="completion-summary"
+                rows={3}
+                maxLength={2000}
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder="Saved against the job when you mark it complete. The customer never sees this."
+              />
+            </section>
+          )}
         </Card>
 
         <Card className="h-fit space-y-4 p-5">
@@ -250,8 +263,8 @@ export function JobDetailClient({ jobId, timeZone }: { jobId: string; timeZone: 
           ) : null}
 
           {job.status === "COMPLETED" ? (
-            <p className="rounded-lg border border-emerald-600/30 bg-emerald-500/10 p-3 text-sm">
-              This job is finished. The customer can see it in their booking history.
+            <p className="text-[13px] text-muted-foreground">
+              Finished. The customer can see this in their booking history.
             </p>
           ) : null}
 

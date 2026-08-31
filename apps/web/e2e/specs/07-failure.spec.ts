@@ -12,6 +12,7 @@ import {
 } from "../support/helpers";
 import {
   confirmedJobForRunCustomer,
+  sharedConfirmedJob,
   ensureVehicleViaApi,
   freeSlotForTechnician,
   pendingBookingAt,
@@ -85,7 +86,9 @@ test.describe("when things go wrong", () => {
   });
 
   test("an oversized or wrong-typed upload is refused with a readable reason", async () => {
-    const { jobId } = await confirmedJobForRunCustomer({ plate: runPlate("UPL") });
+    // Reuses the run's shared job: this test is about upload validation, not
+    // about creating another booking.
+    const { jobId } = await sharedConfirmedJob(runPlate("SHR"));
     const employeeApi = await apiFor("employee");
 
     const tooBig = await employeeApi.post(`/api/proxy/jobs/${jobId}/photos/presign`, {

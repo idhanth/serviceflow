@@ -179,7 +179,7 @@ export function PhotoGallery({
               if (remaining > 0) accept(event.dataTransfer.files);
             }}
             className={cn(
-              "rounded-xl border-2 border-dashed p-6 text-center transition-colors duration-150",
+              "rounded-lg border border-dashed p-5 text-center transition-colors duration-150",
               dragging ? "border-primary bg-primary/5" : "border-muted-foreground/25",
               remaining <= 0 && "opacity-60",
             )}
@@ -275,9 +275,9 @@ export function PhotoGallery({
       ) : null}
 
       {query.isPending ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-8">
           {[0, 1, 2, 3].map((index) => (
-            <Skeleton key={index} className="aspect-square rounded-lg" />
+            <Skeleton key={index} className="aspect-square rounded-md" />
           ))}
         </div>
       ) : null}
@@ -301,10 +301,10 @@ export function PhotoGallery({
         if (inGroup.length === 0) return null;
         return (
           <section key={group.type} className="space-y-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <h3 className="text-[12px] font-medium text-muted-foreground">
               {group.label} ({inGroup.length})
             </h3>
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <ul className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-8">
               {inGroup.map((photo) => (
                 <li key={photo.id} className="group relative">
                   <a

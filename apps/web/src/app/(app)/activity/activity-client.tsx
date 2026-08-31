@@ -3,19 +3,13 @@
 import { History } from "lucide-react";
 import { useState } from "react";
 
+import { DataPanel, PanelFooter } from "@/components/data/data-panel";
+import { FieldSelect } from "@/components/data/field-select";
 import { PageHeader } from "@/components/data/page-header";
+import { Segmented } from "@/components/data/segmented";
 import { PaginationControls } from "@/components/data/pagination-controls";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -28,12 +22,12 @@ import { useQuery } from "@tanstack/react-query";
 
 import { usePagedResource } from "@/hooks/use-resource";
 import { apiFetchData } from "@/lib/api-client";
-import { formatDate, formatRelative, initialsOf } from "@/lib/format";
+import { formatDate, formatDayLabel, formatRelative, formatTime, initialsOf } from "@/lib/format";
 import { queryKeys } from "@/lib/query-keys";
 import type { AuditActor, AuditEntry } from "@/lib/types";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-const COLUMNS = 4;
+const COLUMNS = 3;
 
 /** Broad groups, so an admin can ask "what happened to bookings" in one click. */
 const AREAS = [
@@ -54,27 +48,86 @@ const PERIODS = [
 type Area = (typeof AREAS)[number]["value"];
 type Period = (typeof PERIODS)[number]["value"];
 
-/** "BOOKING_RESCHEDULED" reads badly in a table; this is the same thing in English. */
+/**
+ * An audit entry as a sentence.
+ *
+ * The stored metadata is a small key/value bag, which is the right shape for a
+ * table nobody can edit and the wrong shape for a person to read. "Job -
+ * employee: Marcus Webb · scheduled start: 2026-09-02T19:00:00-04:00" is a log
+ * line; "Assigned Marcus Webb, Wed, Sep 2 at 4:00 PM" is what happened.
+ */
+const ACTION_VERBS: Record<string, string> = {
+  BOOKING_CREATED: "Requested a booking",
+  BOOKING_CONFIRMED: "Confirmed a booking",
+  BOOKING_REJECTED: "Declined a booking",
+  BOOKING_RESCHEDULED: "Moved a booking",
+  BOOKING_CANCELLED: "Cancelled a booking",
+  JOB_ASSIGNED: "Assigned a job",
+  JOB_REASSIGNED: "Reassigned a job",
+  JOB_STARTED: "Started a job",
+  JOB_COMPLETED: "Completed a job",
+  JOB_CANCELLED: "Cancelled a job",
+  NOTE_ADDED: "Added a note",
+  NOTE_DELETED: "Removed a note",
+  PHOTO_DELETED: "Removed a photo",
+  CUSTOMER_CREATED: "Added a customer",
+  CUSTOMER_UPDATED: "Updated a customer",
+  EMPLOYEE_CREATED: "Added a team member",
+  EMPLOYEE_UPDATED: "Updated a team member",
+  EMPLOYEE_DEACTIVATED: "Deactivated a team member",
+  EMPLOYEE_REACTIVATED: "Reactivated a team member",
+  SERVICE_CREATED: "Added a service",
+  SERVICE_UPDATED: "Updated a service",
+  SERVICE_RETIRED: "Retired a service",
+  VEHICLE_ARCHIVED: "Archived a vehicle",
+  AVAILABILITY_UPDATED: "Updated working hours",
+  AVAILABILITY_OVERRIDE_SET: "Set a day override",
+  AVAILABILITY_OVERRIDE_REMOVED: "Removed a day override",
+};
+
 function describeAction(action: string): string {
-  const words = action.toLowerCase().split("_");
-  const sentence = words.join(" ");
-  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+  if (ACTION_VERBS[action]) return ACTION_VERBS[action];
+  const words = action.toLowerCase().replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function toneOf(action: string): "default" | "secondary" | "destructive" | "outline" {
-  if (action.endsWith("CANCELLED") || action.endsWith("REJECTED") || action.endsWith("DELETED")) {
-    return "destructive";
+/** Destructive actions read differently; everything else is neutral. */
+function isReversal(action: string): boolean {
+  return /CANCELLED|REJECTED|DELETED|ARCHIVED|DEACTIVATED|RETIRED/.test(action);
+}
+
+/**
+ * Which metadata keys deserve a word in front of them.
+ *
+ * Most do not: "Requested a booking · Express Wash · 2022 Lexus RX · Mon, Sep 7
+ * at 4:30 PM" needs no labels to be understood, and adding them ("service:",
+ * "requested start:") turns a sentence back into a log line.
+ */
+const METADATA_LABELS: Record<string, string> = {
+  from: "from",
+  to: "to",
+  fields: "changed",
+};
+
+/** Renders one metadata value: dates become readable, flags become words. */
+function renderValue(key: string, value: unknown, timeZone: string): string | null {
+  if (value === null || value === "" || value === undefined) return null;
+  if (key === "by_customer") return value === true ? "by the customer" : null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return `${formatDayLabel(value, timeZone)} at ${formatTime(value, timeZone)}`;
   }
-  if (action.endsWith("CREATED") || action.endsWith("COMPLETED")) return "default";
-  return "secondary";
+  return String(value);
 }
 
-/** The metadata is a small, already-redacted summary; render it as plain facts. */
-function summarize(entry: AuditEntry): string | null {
+function summarize(entry: AuditEntry, timeZone: string): string | null {
   if (!entry.metadata) return null;
-  const parts = Object.entries(entry.metadata)
-    .filter(([, value]) => value !== null && value !== "")
-    .map(([key, value]) => `${key.replace(/_/g, " ")}: ${String(value)}`);
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(entry.metadata)) {
+    const rendered = renderValue(key, value, timeZone);
+    if (rendered === null) continue;
+    const label = METADATA_LABELS[key] ?? "";
+    parts.push(label ? `${label} ${rendered}` : rendered);
+  }
   return parts.length ? parts.join(" · ") : null;
 }
 
@@ -84,7 +137,7 @@ function boundaryFor(period: Period): string | undefined {
   return days ? new Date(Date.now() - days * 86_400_000).toISOString() : undefined;
 }
 
-export function ActivityClient() {
+export function ActivityClient({ timeZone }: { timeZone: string }) {
   const [area, setArea] = useState<Area>("all");
   const [period, setPeriod] = useState<Period>("7");
   // Held in state, not derived during render: a boundary recomputed every render
@@ -126,76 +179,49 @@ export function ActivityClient() {
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div role="group" aria-label="Filter by area" className="flex flex-wrap rounded-lg border p-0.5">
-          {AREAS.map((option) => (
-            <Button
-              key={option.value}
-              type="button"
-              size="sm"
-              variant={area === option.value ? "secondary" : "ghost"}
-              aria-pressed={area === option.value}
-              onClick={() => reset(setArea)(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
+        <Segmented
+          label="Filter by area"
+          value={area}
+          onChange={reset(setArea)}
+          options={AREAS.map((option) => ({ label: option.label, value: option.value }))}
+        />
 
-        <div className="flex flex-wrap items-center gap-3">
-          <Select
+        <div className="flex flex-wrap items-center gap-2">
+          <FieldSelect
+            label="Filter by person"
             value={actorId}
-            onValueChange={(value) => reset(setActorId)(String(value))}
-            items={[
-              { label: "Anyone", value: "all" },
-              ...(actors.data ?? []).map((actor) => ({
-                label: actor.full_name,
-                value: actor.id,
-              })),
-            ]}
+            onChange={reset(setActorId)}
+            className="w-44"
           >
-            <SelectTrigger aria-label="Filter by person" className="min-w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Anyone</SelectItem>
-              {(actors.data ?? []).map((actor) => (
-                <SelectItem key={actor.id} value={actor.id}>
-                  {actor.full_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div role="group" aria-label="Filter by period" className="flex rounded-lg border p-0.5">
-            {PERIODS.map((option) => (
-              <Button
-                key={option.value}
-                type="button"
-                size="sm"
-                variant={period === option.value ? "secondary" : "ghost"}
-                aria-pressed={period === option.value}
-                onClick={() => {
-                  setPeriod(option.value);
-                  setSince(boundaryFor(option.value));
-                  setPage(1);
-                }}
-              >
-                {option.label}
-              </Button>
+            <option value="all">Anyone</option>
+            {(actors.data ?? []).map((actor) => (
+              <option key={actor.id} value={actor.id}>
+                {actor.full_name}
+              </option>
             ))}
-          </div>
+          </FieldSelect>
+
+          <Segmented
+            label="Filter by period"
+            value={period}
+            onChange={(next) => {
+              setPeriod(next);
+              setSince(boundaryFor(next));
+              setPage(1);
+            }}
+            options={PERIODS.map((option) => ({ label: option.label, value: option.value }))}
+          />
         </div>
       </div>
 
-      <Card className="overflow-hidden p-0">
+      <DataPanel>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[200px]">Who</TableHead>
-                <TableHead className="min-w-[180px]">Did what</TableHead>
-                <TableHead className="min-w-[260px]">Details</TableHead>
-                <TableHead className="min-w-[160px]">When</TableHead>
+                <TableHead className="min-w-[180px]">Who</TableHead>
+                <TableHead>What happened</TableHead>
+                <TableHead className="w-[120px] text-right">When</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -243,31 +269,37 @@ export function ActivityClient() {
               ) : null}
 
               {entries.map((entry) => {
-                const detail = summarize(entry);
+                const detail = summarize(entry, timeZone);
                 return (
                   <TableRow key={entry.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar className="size-8">
-                          <AvatarFallback className="text-xs">
+                    <TableCell className="whitespace-nowrap align-top">
+                      <div className="flex items-center gap-2.5 py-0.5">
+                        <Avatar className="size-6">
+                          <AvatarFallback className="text-[10px]">
                             {initialsOf(entry.actor_name)}
                           </AvatarFallback>
                         </Avatar>
                         <span className="truncate font-medium">{entry.actor_name}</span>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={toneOf(entry.action)} className="font-normal">
-                        {describeAction(entry.action)}
-                      </Badge>
+                    <TableCell className="w-full whitespace-normal align-top">
+                      <div className="py-0.5">
+                        <span
+                          className={
+                            isReversal(entry.action) ? "text-status-danger" : "text-foreground"
+                          }
+                        >
+                          {describeAction(entry.action)}
+                        </span>
+                        {detail ? (
+                          <span className="text-muted-foreground"> · {detail}</span>
+                        ) : null}
+                      </div>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      <span className="capitalize">{entry.resource_type}</span>
-                      {detail ? <span> — {detail}</span> : null}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <div>{formatRelative(entry.created_at)}</div>
-                      <div className="text-muted-foreground">{formatDate(entry.created_at)}</div>
+                    <TableCell className="whitespace-nowrap text-right align-top text-muted-foreground">
+                      <time dateTime={entry.created_at} title={formatDate(entry.created_at)}>
+                        {formatRelative(entry.created_at)}
+                      </time>
                     </TableCell>
                   </TableRow>
                 );
@@ -275,11 +307,12 @@ export function ActivityClient() {
             </TableBody>
           </Table>
         </div>
-      </Card>
-
-      {query.data ? (
-        <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="entries" />
-      ) : null}
+        {query.data && query.data.meta.total > 0 ? (
+          <PanelFooter>
+            <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="entries" />
+          </PanelFooter>
+        ) : null}
+      </DataPanel>
     </div>
   );
 }

@@ -260,9 +260,15 @@ export async function findRowAcrossPages(
 
     const next = page.getByRole("button", { name: "Next" });
     if ((await next.count()) === 0 || (await next.isDisabled())) break;
+
+    // Wait for the rows themselves to change rather than for any particular
+    // wording in the pager, so this keeps working when that copy is redesigned.
+    const firstRow = page.locator("tbody tr").first();
+    const before = await firstRow.innerText().catch(() => "");
     await next.click();
-    // Wait for the page indicator to move before judging the new page.
-    await expect(page.getByText(new RegExp(`Page ${step + 2} of`))).toBeVisible();
+    await expect
+      .poll(async () => firstRow.innerText().catch(() => ""), { timeout: 10_000 })
+      .not.toBe(before);
   }
 
   throw new Error(`no row matching ${matchers.join(" + ")} in the first ${maxPages} pages`);

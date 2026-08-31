@@ -2,7 +2,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 import { STORAGE } from "../support/config";
 import { apiFor, jsonOf, looksSafe, runPlate } from "../support/helpers";
-import { confirmedJobForRunCustomer } from "../support/seedApi";
+import { sharedConfirmedJob } from "../support/seedApi";
 import type { Booking, Job } from "../support/types";
 
 async function pageFor(browser: Browser, storageState: string): Promise<Page> {
@@ -77,7 +77,7 @@ test.describe("what the browser will not let you do", () => {
     // skips itself when the data is inconvenient proves nothing.
     const employeeApi = await apiFor("employee");
     const customerApi = await apiFor("customer");
-    const { jobId, bookingId } = await confirmedJobForRunCustomer({ plate: runPlate("SEC") });
+    const { jobId, bookingId } = await sharedConfirmedJob(runPlate("SHR"));
 
     const secret = `E2E secret ${Date.now()}: do not show this to the customer.`;
     await jsonOf(

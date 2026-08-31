@@ -143,25 +143,35 @@ export function BookingWizard() {
           <ArrowLeft className="size-4" aria-hidden />
           Back to bookings
         </Button>
-        <h1 className="text-2xl font-semibold tracking-tight">Book a service</h1>
+        <h1 className="text-[20px] font-semibold leading-tight tracking-[-0.015em]">Book a service</h1>
       </div>
 
-      <ol className="flex flex-wrap gap-2" aria-label="Progress">
+      <ol className="flex flex-wrap items-center gap-2" aria-label="Progress">
+        {/* A stepper, not four pill buttons: the number carries the state and
+            the rule between them carries the progression. */}
         {STEPS.map((label, index) => (
-          <li key={label}>
+          <li key={label} className="flex items-center gap-2">
+            {index > 0 ? (
+              <span
+                aria-hidden
+                className={cn("h-px w-6", index <= step ? "bg-accent-solid/50" : "bg-border")}
+              />
+            ) : null}
             <span
               aria-current={index === step ? "step" : undefined}
               className={cn(
-                "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors duration-150",
-                index === step && "border-primary/40 bg-primary/5 font-medium",
+                "flex items-center gap-2 text-[13px] transition-colors duration-100",
+                index === step && "font-medium text-foreground",
                 index < step && "text-muted-foreground",
-                index > step && "text-muted-foreground/70",
+                index > step && "text-muted-foreground/60",
               )}
             >
               <span
                 className={cn(
-                  "flex size-5 items-center justify-center rounded-full text-xs",
-                  index < step ? "bg-primary text-primary-foreground" : "bg-muted",
+                  "flex size-5 items-center justify-center rounded-full text-[11px] font-medium",
+                  index < step && "bg-accent-solid text-accent-solid-foreground",
+                  index === step && "border border-accent-solid text-accent-solid",
+                  index > step && "border border-border text-muted-foreground/70",
                 )}
               >
                 {index < step ? <Check className="size-3" aria-hidden /> : index + 1}
@@ -204,9 +214,9 @@ export function BookingWizard() {
                   setStep(1);
                 }}
                 className={cn(
-                  "rounded-xl border bg-card p-5 text-left transition-colors duration-150 hover:border-primary/40 hover:bg-accent/40",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  serviceId === option.id && "border-primary/50 bg-primary/5",
+                  "focus-ring rounded-lg border bg-surface p-4 text-left transition-colors duration-75",
+                  "hover:border-accent-solid/40 hover:bg-muted/40",
+                  serviceId === option.id && "border-accent-solid/50 bg-accent-solid/[0.05]",
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -267,9 +277,9 @@ export function BookingWizard() {
                   goToDateStep();
                 }}
                 className={cn(
-                  "flex items-center gap-3 rounded-xl border bg-card p-5 text-left transition-colors duration-150 hover:border-primary/40 hover:bg-accent/40",
+                  "focus-ring flex items-center gap-3 rounded-lg border bg-surface p-4 text-left transition-colors duration-75 hover:border-accent-solid/40 hover:bg-muted/40",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  vehicleId === option.id && "border-primary/50 bg-primary/5",
+                  vehicleId === option.id && "border-accent-solid/50 bg-accent-solid/[0.05]",
                 )}
               >
                 <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">

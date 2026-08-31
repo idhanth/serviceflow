@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormSection } from "@/components/data/form-section";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fieldErrorsOf, usePagedResource, useResourceMutation } from "@/hooks/use-resource";
 import { apiFetchData } from "@/lib/api-client";
@@ -147,6 +148,7 @@ export function EmployeeFormDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+          <FormSection title="Person">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="employee-first">First name</Label>
@@ -190,6 +192,9 @@ export function EmployeeFormDialog({
             </div>
           )}
 
+          </FormSection>
+
+          <FormSection title="Role">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="employee-title">Job title</Label>
@@ -207,9 +212,14 @@ export function EmployeeFormDialog({
               <Input id="employee-phone" type="tel" autoComplete="tel" {...register("phone")} />
             </div>
           </div>
+          </FormSection>
 
+          <FormSection
+            title="Qualifications"
+            description="Only qualified people can be assigned to a service."
+          >
           <fieldset className="space-y-2">
-            <legend className="text-sm font-medium">Services they can perform</legend>
+            <legend className="sr-only">Services they can perform</legend>
             {services.isPending ? (
               <div className="space-y-2">
                 {[0, 1, 2].map((index) => (
@@ -234,7 +244,9 @@ export function EmployeeFormDialog({
                     return (
                       <label
                         key={service.id}
-                        className="flex cursor-pointer items-center gap-2.5 rounded-lg border p-2.5 text-sm transition-colors duration-150 hover:bg-accent/50 has-[button[data-checked]]:border-primary/40 has-[button[data-checked]]:bg-primary/5"
+                        // A checkbox list, not six bordered boxes: the border
+                        // around each option competes with the dialog's own.
+                        className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors duration-75 hover:bg-muted/60"
                       >
                         <Checkbox
                           checked={checked}
@@ -259,6 +271,7 @@ export function EmployeeFormDialog({
               )}
             />
           </fieldset>
+          </FormSection>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

@@ -3,12 +3,15 @@
 import { ClipboardList } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader } from "@/components/data/page-header";
+import { DataPanel, PanelFooter, PrimaryCell } from "@/components/data/data-panel";
+import { MobileList, MobileRow } from "@/components/data/mobile-list";
+import { PageHeader, Toolbar } from "@/components/data/page-header";
 import { PaginationControls } from "@/components/data/pagination-controls";
+import { SearchInput } from "@/components/data/search-input";
+import { Segmented } from "@/components/data/segmented";
 import { BookingStatusBadge, JobStatusBadge } from "@/components/data/status-badge";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -37,18 +40,34 @@ type Filter = (typeof FILTERS)[number]["value"];
 
 export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
   const [filter, setFilter] = useState<Filter>("PENDING");
+  const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [reviewing, setReviewing] = useState<Booking | null>(null);
 
   const params = {
     page,
-    page_size: 12,
+    page_size: 20,
+    q,
     status: filter === "all" ? undefined : (filter as BookingStatus),
   };
   const query = usePagedResource<Booking>(queryKeys.bookings.list(params), "bookings", params);
 
+  // The pending count is the number an admin is actually managing, so it sits
+  // on the filter itself rather than making them switch tabs to find it.
+  const pendingParams = { page: 1, page_size: 1, status: "PENDING" as BookingStatus };
+  const pending = usePagedResource<Booking>(
+    queryKeys.bookings.list(pendingParams),
+    "bookings",
+    pendingParams,
+  );
+
   function changeFilter(next: Filter) {
     setFilter(next);
+    setPage(1);
+  }
+
+  function search(next: string) {
+    setQ(next);
     setPage(1);
   }
 
@@ -61,43 +80,72 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         title="Bookings"
-        description="Review requests, assign a technician, and confirm the work."
+        description="Requests from customers, waiting to be scheduled or already booked in."
       />
 
-      <div
-        role="group"
-        aria-label="Filter by status"
-        className="flex w-full overflow-x-auto rounded-lg border p-0.5 sm:w-fit"
-      >
-        {FILTERS.map((option) => (
-          <Button
-            key={option.value}
-            type="button"
-            size="sm"
-            variant={filter === option.value ? "secondary" : "ghost"}
-            aria-pressed={filter === option.value}
-            className="shrink-0"
-            onClick={() => changeFilter(option.value)}
-          >
-            {option.label}
-          </Button>
-        ))}
-      </div>
+      <Toolbar className="justify-between">
+        <Segmented
+          label="Filter by status"
+          value={filter}
+          onChange={changeFilter}
+          options={FILTERS.map((option) =>
+            option.value === "PENDING"
+              ? { ...option, count: pending.data?.meta.total }
+              : option,
+          )}
+        />
+        <SearchInput
+          value={q}
+          onChange={search}
+          label="Search bookings"
+          placeholder="Search bookings"
+        />
+      </Toolbar>
 
-      <Card className="overflow-hidden p-0">
-        <div className="overflow-x-auto">
+      <DataPanel>
+        {/* Phones get the same records as a stacked list; see MobileList. */}
+        <MobileList>
+          {bookings.map((booking) => (
+            <MobileRow
+              key={booking.id}
+              onClick={() => setReviewing(booking)}
+              title={booking.customer?.full_name ?? "Unknown customer"}
+              subtitle={`${booking.service.name} · ${booking.vehicle.display_name}`}
+              trailing={
+                <span className="text-[14px] font-medium tabular-nums">
+                  {formatPrice(booking.service.base_price)}
+                </span>
+              }
+              meta={
+                <>
+                  <span className="text-[12px] text-muted-foreground">
+                    {formatDayLabel(booking.requested_start, timeZone)} ·{" "}
+                    {formatTime(booking.requested_start, timeZone)}
+                  </span>
+                  {booking.job ? (
+                    <JobStatusBadge status={booking.job.status} />
+                  ) : (
+                    <BookingStatusBadge status={booking.status} />
+                  )}
+                </>
+              }
+            />
+          ))}
+        </MobileList>
+
+        <div className="hidden overflow-x-auto md:block">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[160px]">Customer</TableHead>
+                <TableHead className="min-w-[190px]">Customer</TableHead>
                 <TableHead className="min-w-[150px]">Service</TableHead>
-                <TableHead className="min-w-[150px]">Vehicle</TableHead>
-                <TableHead className="min-w-[150px]">Requested</TableHead>
-                <TableHead className="min-w-[150px]">Status</TableHead>
-                <TableHead className="text-right">Price</TableHead>
+                <TableHead className="min-w-[170px]">Requested</TableHead>
+                <TableHead className="min-w-[130px]">Technician</TableHead>
+                <TableHead className="min-w-[140px]">Status</TableHead>
+                <TableHead className="min-w-[90px] text-right">Price</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -114,20 +162,32 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
               {showEmpty ? (
                 <TableRow>
                   <TableCell colSpan={COLUMNS} className="p-0">
+                    {/* The message has to match why it is empty: a search that
+                        found nothing is a different situation from an empty
+                        queue, and offering "back to pending" to someone who is
+                        searching does not help them. */}
                     <EmptyState
                       icon={ClipboardList}
                       title={
-                        filter === "PENDING"
-                          ? "Nothing waiting on you"
-                          : "No bookings match this filter"
+                        q
+                          ? `No bookings match “${q}”`
+                          : filter === "PENDING"
+                            ? "Nothing waiting on you"
+                            : "No bookings with this status"
                       }
                       description={
-                        filter === "PENDING"
-                          ? "New booking requests will appear here for review."
-                          : "Try a different status filter."
+                        q
+                          ? "Try a different name, service or vehicle."
+                          : filter === "PENDING"
+                            ? "New booking requests appear here for review."
+                            : "Try a different status."
                       }
                       action={
-                        filter === "PENDING" ? null : (
+                        q ? (
+                          <Button variant="outline" size="sm" onClick={() => search("")}>
+                            Clear search
+                          </Button>
+                        ) : filter === "PENDING" ? null : (
                           <Button variant="outline" size="sm" onClick={() => changeFilter("PENDING")}>
                             Back to pending
                           </Button>
@@ -139,31 +199,51 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
               ) : null}
 
               {bookings.map((booking) => (
+                // Focusable and activatable, but still a row: giving a <tr> a
+                // button role strips the table semantics a screen reader needs
+                // to read the header for each cell.
                 <TableRow
                   key={booking.id}
+                  tabIndex={0}
+                  aria-label={`Review booking for ${booking.customer?.full_name ?? "customer"}`}
                   className="cursor-pointer"
                   onClick={() => setReviewing(booking)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setReviewing(booking);
+                    }
+                  }}
                 >
-                  <TableCell className="font-medium">
-                    {booking.customer?.full_name ?? "—"}
+                  {/* Customer and vehicle together: one identity, not two columns
+                      that have to be read across. */}
+                  <TableCell>
+                    <PrimaryCell
+                      title={booking.customer?.full_name ?? "Unknown customer"}
+                      subtitle={booking.vehicle.display_name}
+                    />
                   </TableCell>
                   <TableCell>{booking.service.name}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    {booking.vehicle.display_name}
+                    <span className="text-foreground">
+                      {formatDayLabel(booking.requested_start, timeZone)}
+                    </span>
+                    <span className="px-1.5 text-border">·</span>
+                    {formatTime(booking.requested_start, timeZone)}
+                  </TableCell>
+                  {/* Who is doing it - the question the pending queue exists to
+                      answer, and the first thing to check on a confirmed one. */}
+                  <TableCell className={booking.job ? undefined : "text-muted-foreground"}>
+                    {booking.job ? booking.job.employee_name : "Unassigned"}
                   </TableCell>
                   <TableCell>
-                    <div>{formatDayLabel(booking.requested_start, timeZone)}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {formatTime(booking.requested_start, timeZone)}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1.5">
+                    {booking.job ? (
+                      <JobStatusBadge status={booking.job.status} />
+                    ) : (
                       <BookingStatusBadge status={booking.status} />
-                      {booking.job ? <JobStatusBadge status={booking.job.status} /> : null}
-                    </div>
+                    )}
                   </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
+                  <TableCell className="text-right font-medium">
                     {formatPrice(booking.service.base_price)}
                   </TableCell>
                 </TableRow>
@@ -171,11 +251,12 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
             </TableBody>
           </Table>
         </div>
-      </Card>
-
-      {query.data ? (
-        <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="bookings" />
-      ) : null}
+        {query.data && query.data.meta.total > 0 ? (
+          <PanelFooter>
+            <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="bookings" />
+          </PanelFooter>
+        ) : null}
+      </DataPanel>
 
       <BookingReviewSheet
         booking={active}

@@ -44,12 +44,22 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  render,
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // A button that renders as something else - almost always a Link - is not a
+  // native <button>, and Base UI has to be told so or it keeps button semantics
+  // that the element cannot honour. Inferring it here means no call site has to
+  // remember, and the console stays clean.
+  const isNative = nativeButton ?? render === undefined
+
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={isNative}
       {...props}
     />
   )

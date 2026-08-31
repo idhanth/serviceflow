@@ -38,9 +38,9 @@ export function SearchInput({
   }, [draft, onChange, value]);
 
   return (
-    <div className="relative w-full sm:max-w-xs">
+    <div className="relative w-full sm:w-64">
       <Search
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+        className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
         aria-hidden
       />
       <Input
@@ -49,7 +49,9 @@ export function SearchInput({
         placeholder={placeholder}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
-        className="pl-9 pr-9"
+        // Chrome draws its own clear button on type=search; ours is already
+              // there, and two of them side by side looks like a bug.
+        className="h-8 pl-8 pr-8 text-[13px] [&::-webkit-search-cancel-button]:appearance-none"
       />
       {draft ? (
         <Button
@@ -57,7 +59,7 @@ export function SearchInput({
           variant="ghost"
           size="icon"
           aria-label="Clear search"
-          className="absolute right-1 top-1/2 size-7 -translate-y-1/2"
+          className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2"
           onClick={() => {
             setDraft("");
             onChange("");

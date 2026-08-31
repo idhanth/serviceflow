@@ -4,11 +4,13 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 8 of 10 complete** — the product is now backed by evidence
-rather than assertion: 28 Playwright tests drive the real browser through the
-customer, admin and employee journeys; 81 tests hold real threads against real
-PostgreSQL and Redis; failure tests break real dependencies; and the load
-numbers below were measured, not hoped for. See [Roadmap](#roadmap).
+**Status: Phase 9 of 10 complete** — the product now has an interface to match
+the engineering: one type scale, one accent, one status system, tables built for
+scanning a working day, and a dashboard that answers what needs a decision
+rather than greeting you. It is backed by evidence too — 28 Playwright tests
+drive the real browser through all three roles, 81 tests hold real threads
+against real PostgreSQL and Redis, and the load numbers below were measured.
+See [Roadmap](#roadmap).
 
 ## Stack
 
@@ -81,6 +83,13 @@ Next.js  ->  route handlers (/api/proxy)  ->  FastAPI  ->  service layer  ->  Po
                                                   |                  |
                                             email provider    SSE -> browser
 ```
+
+The interface is documented in [ADR 0009](docs/adr-0009-interface-design.md):
+a 14px working size with page titles at 20px, near-black primary actions with a
+single teal accent spent only on selection and live work, six status meanings
+with one colour each, 6px radii, 44px table rows, and no dependency added to
+achieve any of it. Phones get the operational tables as stacked lists rather
+than a horizontal scroll.
 
 Three decisions worth knowing up front:
 
@@ -236,7 +245,7 @@ mapping to 3,834 distinct bookings.
 | 6 | Redis, Celery, email, realtime | done |
 | 7 | Idempotency, audit logs, rate limiting, observability | done |
 | 8 | Integration, E2E, concurrency and load tests | done |
-| 9 | UI polish, responsive, dark mode | next |
-| 10 | CI/CD, production infrastructure, monitoring | |
+| 9 | UI polish, responsive, dark mode | done |
+| 10 | CI/CD, production infrastructure, monitoring | next |
 
 Full specification: [docs/PRD.md](docs/PRD.md).

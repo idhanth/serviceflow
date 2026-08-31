@@ -4,15 +4,15 @@ import { MoreHorizontal, Pencil, Plus, UserMinus, UserSquare, UserCheck } from "
 import { useState } from "react";
 
 import { ConfirmDialog } from "@/components/data/confirm-dialog";
-import { PageHeader } from "@/components/data/page-header";
+import { DataPanel, PanelFooter, PrimaryCell } from "@/components/data/data-panel";
+import { PageHeader, Toolbar } from "@/components/data/page-header";
+import { Segmented } from "@/components/data/segmented";
 import { PaginationControls } from "@/components/data/pagination-controls";
 import { SearchInput } from "@/components/data/search-input";
 import { ActiveBadge } from "@/components/data/status-badge";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -106,41 +106,29 @@ export function EmployeesClient() {
         }
       />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <Toolbar>
+        <Segmented
+          label="Filter by status"
+          value={filter}
+          onChange={changeFilter}
+          options={FILTERS}
+        />
         <SearchInput
           value={q}
           onChange={search}
           label="Search employees"
-          placeholder="Name, email or job title..."
+          placeholder="Search team"
         />
-        <div
-          role="group"
-          aria-label="Filter by status"
-          className="flex rounded-lg border p-0.5"
-        >
-          {FILTERS.map((option) => (
-            <Button
-              key={option.value}
-              type="button"
-              size="sm"
-              variant={filter === option.value ? "secondary" : "ghost"}
-              aria-pressed={filter === option.value}
-              onClick={() => changeFilter(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      </div>
+      </Toolbar>
 
-      <Card className="overflow-hidden p-0">
+      <DataPanel>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[220px]">Employee</TableHead>
-                <TableHead className="min-w-[180px]">Contact</TableHead>
-                <TableHead className="min-w-[220px]">Qualified for</TableHead>
+                <TableHead className="min-w-[240px]">Employee</TableHead>
+                <TableHead className="min-w-[220px]">Contact</TableHead>
+                <TableHead className="min-w-[260px]">Qualified for</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-12 sr-only">Actions</TableHead>
               </TableRow>
@@ -202,44 +190,41 @@ export function EmployeesClient() {
               {employees.map((employee) => (
                 <TableRow key={employee.id} className={employee.active ? undefined : "opacity-70"}>
                   <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="size-8">
-                        <AvatarFallback className="text-xs">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar className="size-7">
+                        <AvatarFallback className="text-[11px]">
                           {initialsOf(employee.user.full_name)}
                         </AvatarFallback>
                       </Avatar>
-                      <div className="min-w-0">
-                        <div className="truncate font-medium">{employee.user.full_name}</div>
-                        <div className="truncate text-sm text-muted-foreground">
-                          {employee.job_title}
-                        </div>
-                      </div>
+                      <PrimaryCell
+                        title={employee.user.full_name}
+                        subtitle={employee.job_title}
+                      />
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="text-sm">{employee.user.email}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {employee.user.phone ?? "No phone"}
-                    </div>
+                    <PrimaryCell
+                      title={<span className="font-normal">{employee.user.email}</span>}
+                      subtitle={employee.user.phone ?? "—"}
+                    />
                   </TableCell>
                   <TableCell>
+                    {/* Qualifications are reference detail, not the point of the
+                        row: a quiet list reads faster than eight pills. */}
                     {employee.services.length === 0 ? (
-                      <span className="text-sm text-muted-foreground">
-                        No services assigned
-                      </span>
+                      <span className="text-muted-foreground">No services assigned</span>
                     ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {employee.services.slice(0, 3).map((service) => (
-                          <Badge key={service.id} variant="secondary" className="font-normal">
-                            {service.name}
-                          </Badge>
-                        ))}
-                        {employee.services.length > 3 ? (
-                          <Badge variant="outline" className="font-normal">
-                            +{employee.services.length - 3}
-                          </Badge>
-                        ) : null}
-                      </div>
+                      <span className="text-muted-foreground">
+                        <span className="text-foreground">
+                          {employee.services
+                            .slice(0, 2)
+                            .map((service) => service.name)
+                            .join(", ")}
+                        </span>
+                        {employee.services.length > 2
+                          ? ` +${employee.services.length - 2} more`
+                          : ""}
+                      </span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -292,11 +277,12 @@ export function EmployeesClient() {
             </TableBody>
           </Table>
         </div>
-      </Card>
-
-      {query.data ? (
-        <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="employees" />
-      ) : null}
+        {query.data && query.data.meta.total > 0 ? (
+          <PanelFooter>
+            <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="employees" />
+          </PanelFooter>
+        ) : null}
+      </DataPanel>
 
       <EmployeeFormDialog open={formOpen} onOpenChange={setFormOpen} employee={editing} />
 

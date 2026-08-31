@@ -38,10 +38,10 @@ export function DemoAccounts() {
   }
 
   return (
-    <div className="space-y-3 rounded-xl border bg-card p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Explore with a demo account
-      </p>
+    // Part of the sign-in card, separated by a rule: a second bordered box
+    // below the first made the page look like two unrelated forms.
+    <div className="space-y-2.5 border-t pt-4">
+      <p className="text-[12px] text-muted-foreground">Or explore with a demo account</p>
       <div className="grid grid-cols-3 gap-2">
         {DEMO_ACCOUNTS.map((account) => (
           <Button

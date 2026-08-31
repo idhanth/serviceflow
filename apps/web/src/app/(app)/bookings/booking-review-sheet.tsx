@@ -1,13 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Car, Loader2, Mail, Phone, User } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmDialog } from "@/components/data/confirm-dialog";
 import { BookingStatusBadge, JobStatusBadge } from "@/components/data/status-badge";
 import { ErrorState } from "@/components/data/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -126,95 +125,98 @@ export function BookingReviewSheet({
   return (
     <>
       <Sheet open={booking !== null} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
           {booking ? (
             <>
               <SheetHeader>
-                <SheetTitle className="flex flex-wrap items-center gap-2">
+                <SheetTitle className="flex flex-wrap items-center gap-2.5 text-[16px]">
                   {booking.service.name}
-                  <BookingStatusBadge status={booking.status} />
+                  <BookingStatusBadge status={booking.status} variant="chip" />
                 </SheetTitle>
                 <SheetDescription>
                   {formatWindow(booking.requested_start, booking.requested_end, timeZone)}
                 </SheetDescription>
               </SheetHeader>
 
-              <div className="space-y-6 px-4 pb-8">
-                <section className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Customer
-                    </p>
-                    <p className="flex items-center gap-2 text-sm font-medium">
-                      <User className="size-4 text-muted-foreground" aria-hidden />
-                      {booking.customer?.full_name ?? "—"}
-                    </p>
-                    {booking.customer ? (
-                      <>
-                        <a
-                          href={`mailto:${booking.customer.email}`}
-                          className="flex items-center gap-2 text-sm text-muted-foreground hover:underline"
-                        >
-                          <Mail className="size-3.5" aria-hidden />
-                          {booking.customer.email}
-                        </a>
-                        {booking.customer.phone ? (
+              <div className="space-y-5 px-4 pb-8">
+                {/* Facts first, as a definition list. Two aligned columns with
+                    real gaps - the previous grid let the customer's email run
+                    into the vehicle's plate. */}
+                <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+                  <div className="min-w-0 space-y-1">
+                    <dt className="text-[12px] text-muted-foreground">Customer</dt>
+                    <dd className="space-y-0.5">
+                      <p className="text-[13px] font-medium">
+                        {booking.customer?.full_name ?? "—"}
+                      </p>
+                      {booking.customer ? (
+                        <>
                           <a
-                            href={`tel:${booking.customer.phone}`}
-                            className="flex items-center gap-2 text-sm text-muted-foreground hover:underline"
+                            href={`mailto:${booking.customer.email}`}
+                            className="focus-ring block break-all text-[13px] text-muted-foreground hover:text-foreground hover:underline"
                           >
-                            <Phone className="size-3.5" aria-hidden />
-                            {booking.customer.phone}
+                            {booking.customer.email}
                           </a>
-                        ) : null}
-                      </>
-                    ) : null}
+                          {booking.customer.phone ? (
+                            <a
+                              href={`tel:${booking.customer.phone}`}
+                              className="focus-ring block truncate text-[13px] tabular-nums text-muted-foreground hover:text-foreground hover:underline"
+                            >
+                              {booking.customer.phone}
+                            </a>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </dd>
+                  </div>
+
+                  <div className="min-w-0 space-y-1">
+                    <dt className="text-[12px] text-muted-foreground">Vehicle</dt>
+                    <dd className="space-y-0.5">
+                      <p className="text-[13px] font-medium">{booking.vehicle.display_name}</p>
+                      <p className="text-[13px] text-muted-foreground">
+                        {[booking.vehicle.color, booking.vehicle.license_plate]
+                          .filter(Boolean)
+                          .join(" · ") || "No colour or plate on file"}
+                      </p>
+                    </dd>
                   </div>
 
                   <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Vehicle
-                    </p>
-                    <p className="flex items-center gap-2 text-sm font-medium">
-                      <Car className="size-4 text-muted-foreground" aria-hidden />
-                      {booking.vehicle.display_name}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {[booking.vehicle.color, booking.vehicle.license_plate]
-                        .filter(Boolean)
-                        .join(" · ") || "No colour or plate on file"}
-                    </p>
+                    <dt className="text-[12px] text-muted-foreground">Price</dt>
+                    <dd className="text-[13px] font-medium tabular-nums">
+                      {formatPrice(booking.service.base_price)}
+                    </dd>
                   </div>
-                </section>
 
-                <section className="rounded-lg bg-muted/60 p-3 text-sm">
-                  <span className="font-medium">{formatPrice(booking.service.base_price)}</span>
-                  <span className="text-muted-foreground">
-                    {" "}
-                    · {formatDuration(booking.service.duration_minutes)}
-                  </span>
-                </section>
+                  <div className="space-y-1">
+                    <dt className="text-[12px] text-muted-foreground">Duration</dt>
+                    <dd className="text-[13px] font-medium tabular-nums">
+                      {formatDuration(booking.service.duration_minutes)}
+                    </dd>
+                  </div>
+                </dl>
 
                 {booking.customer_notes ? (
                   <section className="space-y-1.5">
-                    <h3 className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Customer note
-                    </h3>
-                    <p className="whitespace-pre-wrap rounded-lg border p-3 text-sm">
+                    <h3 className="text-[13px] font-medium">Note from the customer</h3>
+                    {/* A quotation, not a form field: a bordered box here reads
+                        as something you are meant to type into. */}
+                    <p className="whitespace-pre-wrap border-l-2 border-border pl-3 text-[13px] text-muted-foreground">
                       {booking.customer_notes}
                     </p>
                   </section>
                 ) : null}
 
                 {booking.job ? (
-                  <section className="space-y-2">
-                    <h3 className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Assigned job
-                    </h3>
-                    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                      <div>
-                        <p className="text-sm font-medium">{booking.job.employee_name}</p>
-                        <p className="text-sm text-muted-foreground">
+                  <section className="space-y-1.5">
+                    <h3 className="text-[13px] font-medium">Assigned</h3>
+                    <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-medium">
+                          {booking.job.employee_name}
+                        </p>
+                        <p className="truncate text-[12px] text-muted-foreground">
                           {formatWindow(
                             booking.job.scheduled_start,
                             booking.job.scheduled_end,
@@ -249,73 +251,83 @@ export function BookingReviewSheet({
                     ) : null}
 
                     {candidates.isSuccess && candidates.data.data.length === 0 ? (
-                      <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-amber-500/10 p-3 text-sm">
-                        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                        Nobody on the team is currently qualified for{" "}
-                        {booking.service.name}. Assign the service to an employee first, then
-                        confirm.
+                      <p className="flex items-start gap-2 rounded-md border border-status-pending/25 bg-status-pending/10 p-2.5 text-[13px]">
+                        <AlertCircle
+                          className="mt-px size-3.5 shrink-0 text-status-pending"
+                          aria-hidden
+                        />
+                        Nobody on the team is qualified for {booking.service.name} yet. Assign
+                        the service to someone first, then confirm.
                       </p>
                     ) : null}
 
                     {candidates.isSuccess &&
                     candidates.data.data.length > 0 &&
                     !candidates.data.data.some((c) => c.assignable) ? (
-                      <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-amber-500/10 p-3 text-sm">
-                        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                        Everyone qualified is either off or already booked then. Reschedule
-                        the booking, or adjust someone&apos;s availability.
+                      <p className="flex items-start gap-2 rounded-md border border-status-pending/25 bg-status-pending/10 p-2.5 text-[13px]">
+                        <AlertCircle
+                          className="mt-px size-3.5 shrink-0 text-status-pending"
+                          aria-hidden
+                        />
+                        Everyone qualified is off or already booked then. Reschedule the
+                        booking, or adjust someone&apos;s availability.
                       </p>
                     ) : null}
 
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-[12px] text-muted-foreground">
                       Ranked by who is free, then by how light their day already is.
                     </p>
 
-                    <div className="space-y-2">
+                    {/* One bordered list, not one card per person: this is a
+                        chooser, and eight bordered boxes inside a panel inside a
+                        sheet is three frames too many. */}
+                    <div className="divide-y overflow-hidden rounded-md border">
                       {(candidates.data?.data ?? []).map((candidate, index) => (
                         <label
                           key={candidate.id}
                           className={cn(
-                            "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors duration-150",
+                            "flex items-start gap-3 px-3 py-2.5 transition-colors duration-75",
                             candidate.assignable
-                              ? "hover:bg-accent/50"
-                              : "cursor-not-allowed opacity-70",
-                            employeeId === candidate.id && "border-primary/50 bg-primary/5",
+                              ? "cursor-pointer hover:bg-muted/50"
+                              : "cursor-not-allowed",
+                            employeeId === candidate.id && "bg-accent-solid/[0.07]",
                           )}
                         >
                           <input
                             type="radio"
                             name="assignee"
-                            className="mt-1 size-4 accent-primary"
+                            className="mt-1 size-3.5 accent-[var(--accent-solid)]"
                             checked={employeeId === candidate.id}
                             disabled={!candidate.assignable}
                             onChange={() => setEmployeeId(candidate.id)}
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <span className="truncate text-sm font-medium">
+                            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span
+                                className={cn(
+                                  "truncate text-[13px] font-medium",
+                                  !candidate.assignable && "text-muted-foreground",
+                                )}
+                              >
                                 {candidate.full_name}
                               </span>
+                              <span className="truncate text-[12px] text-muted-foreground">
+                                {candidate.job_title}
+                              </span>
                               {index === 0 && candidate.assignable ? (
-                                <Badge
-                                  variant="outline"
-                                  className="border-emerald-600/30 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/30 dark:text-emerald-300"
-                                >
-                                  Recommended
-                                </Badge>
+                                <span className="rounded border border-status-done/25 bg-status-done/10 px-1 py-px text-[11px] font-medium text-status-done">
+                                  Best fit
+                                </span>
                               ) : null}
                               {!candidate.assignable ? (
-                                <Badge variant="outline" className="bg-muted text-muted-foreground">
+                                <span className="text-[11px] font-medium text-muted-foreground">
                                   {candidate.conflict ? "Busy" : "Unavailable"}
-                                </Badge>
+                                </span>
                               ) : null}
-                            </span>
-                            <span className="block truncate text-sm text-muted-foreground">
-                              {candidate.job_title}
                             </span>
                             {/* The evidence behind the ranking, so it is explained
                                 rather than asserted. */}
-                            <span className="mt-1 block text-xs text-muted-foreground">
+                            <span className="mt-0.5 block text-[12px] text-muted-foreground">
                               {candidate.reason ??
                                 `${candidate.jobs_today} ${
                                   candidate.jobs_today === 1 ? "job" : "jobs"

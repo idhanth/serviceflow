@@ -42,7 +42,7 @@ test.describe("the admin's review and assignment work", () => {
 
     // The sheet explains its ranking rather than just listing people.
     await expect(page.getByText(/Ranked by who is free/)).toBeVisible();
-    await expect(page.getByText("Recommended")).toBeVisible();
+    await expect(page.getByText("Best fit")).toBeVisible();
 
     const recommended = page.getByRole("radio").first();
     await expect(recommended).toBeEnabled();
@@ -112,7 +112,7 @@ test.describe("the admin's review and assignment work", () => {
     await page.goto("/activity");
     await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
 
-    const confirmed = page.getByRole("row").filter({ hasText: "Booking confirmed" }).first();
+    const confirmed = page.getByRole("row").filter({ hasText: "Confirmed a booking" }).first();
     await expect(confirmed).toBeVisible();
     await expect(confirmed).toContainText("Alex Rivera");
 

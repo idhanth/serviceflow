@@ -255,6 +255,29 @@ and any psql session. Stop the development API and worker before a 500-user run,
 or the numbers measure contention for connections. Measured results and what
 they mean are in [ADR 0008](adr-0008-quality-strategy.md) and the README.
 
+## Looking at the interface
+
+Design work on this product is done by rendering pages and looking at them, not
+by reading JSX. `apps/web/shots.mjs` signs in with a real session and screenshots
+any set of routes:
+
+```bash
+cd apps/web
+node shots.mjs                                   # admin, 1440, light
+ROLE=employee PAGES=/dashboard,/jobs node shots.mjs
+WIDTH=390 HEIGHT=844 node shots.mjs              # phone
+THEME=dark TAG=dark node shots.mjs               # dark mode
+```
+
+Files land in `/tmp/shots`. Sessions are cached there between runs because
+sign-in is rate limited; delete `/tmp/shots/.session-*.json` to force a fresh
+one. The script waits for skeletons to clear before capturing, so what you see
+is loaded data.
+
+The breakpoints worth checking are 1440, 1024, 768 and 390, in both themes. The
+design system and the rules behind it are in
+[ADR 0009](adr-0009-interface-design.md).
+
 ## Checks
 
 ```bash

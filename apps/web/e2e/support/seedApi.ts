@@ -215,4 +215,17 @@ export async function confirmedJobForRunCustomer({
   return { jobId: confirmed.data.job!.id, bookingId: booking.id };
 }
 
+/**
+ * One confirmed job per run, shared by the specs that merely need "a job that
+ * exists" rather than a fresh one.
+ *
+ * Booking creation is rate limited per customer - deliberately - and a suite
+ * that creates a booking for every assertion walks into that limit and fails
+ * for a reason that has nothing to do with what it was testing.
+ */
+let sharedJob: Promise<{ jobId: string; bookingId: string }> | null = null;
 
+export function sharedConfirmedJob(plate: string): Promise<{ jobId: string; bookingId: string }> {
+  sharedJob ??= confirmedJobForRunCustomer({ plate });
+  return sharedJob;
+}

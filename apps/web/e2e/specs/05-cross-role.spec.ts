@@ -184,7 +184,7 @@ test.describe("one job, three roles", () => {
 
     await adminPage.goto("/activity");
     await expect(
-      adminPage.getByRole("row").filter({ hasText: "Job completed" }).first(),
+      adminPage.getByRole("row").filter({ hasText: "Completed a job" }).first(),
     ).toBeVisible();
 
     expect(customerErrors, `console errors: ${customerErrors.join(" | ")}`).toHaveLength(0);

@@ -15,8 +15,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    // The font variables live on <html>, not <body>: the base layer sets
+    // font-family on html, and a variable declared one level below it is not
+    // visible there - which silently dropped the whole product to a serif.
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
+      <body>
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

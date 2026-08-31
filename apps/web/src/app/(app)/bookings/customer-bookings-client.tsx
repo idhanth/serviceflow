@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarPlus, ClipboardList, Clock } from "lucide-react";
+import { CalendarPlus, ClipboardList } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -125,8 +125,17 @@ export function CustomerBookingsClient({ timeZone }: { timeZone: string }) {
                         {booking.service.name}
                       </Link>
                     </h2>
-                    <BookingStatusBadge status={booking.status} />
-                    {booking.job ? <JobStatusBadge status={booking.job.status} /> : null}
+                    {/* One state, in the customer's language. "Assigned" is a
+                        rota word - it tells them nothing they did not already
+                        know from "Confirmed". The job's status only takes over
+                        once work has actually started. */}
+                    {booking.job &&
+                    (booking.job.status === "IN_PROGRESS" ||
+                      booking.job.status === "COMPLETED") ? (
+                      <JobStatusBadge status={booking.job.status} />
+                    ) : (
+                      <BookingStatusBadge status={booking.status} />
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground">
                     {formatWindow(booking.requested_start, booking.requested_end, timeZone)}
@@ -150,27 +159,36 @@ export function CustomerBookingsClient({ timeZone }: { timeZone: string }) {
                   ) : null}
                 </div>
 
-                <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
-                  <p className="font-medium tabular-nums">
-                    {formatPrice(booking.service.base_price)}
-                  </p>
-                  <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                    <Clock className="size-3.5" aria-hidden />
-                    {formatDuration(booking.service.duration_minutes)}
-                  </p>
-                  <Button variant="outline" size="sm" render={<Link href={`/bookings/${booking.id}`} />}>
-                    View details
-                  </Button>
-                  {booking.status === "PENDING" || booking.status === "CONFIRMED" ? (
+                <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+                  <div className="space-y-0.5 sm:text-right">
+                    <p className="text-[15px] font-medium tabular-nums">
+                      {formatPrice(booking.service.base_price)}
+                    </p>
+                    <p className="text-[12px] text-muted-foreground">
+                      {formatDuration(booking.service.duration_minutes)}
+                    </p>
+                  </div>
+                  {/* Actions in a row: two stacked outline buttons read as a
+                      menu rather than as the two things you can do here. */}
+                  <div className="flex items-center gap-2">
+                    {booking.status === "PENDING" || booking.status === "CONFIRMED" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={cancel.isPending}
+                        onClick={() => setCancelling(booking)}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={cancel.isPending}
-                      onClick={() => setCancelling(booking)}
+                      render={<Link href={`/bookings/${booking.id}`} />}
                     >
-                      Cancel
+                      View details
                     </Button>
-                  ) : null}
+                  </div>
                 </div>
               </div>
             </Card>

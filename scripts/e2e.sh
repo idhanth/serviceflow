@@ -72,9 +72,12 @@ else
   STARTED+=("$(cat "$LOGS/e2e-worker.pid")")
 fi
 
-if curl -sf http://127.0.0.1:3000/login >/dev/null 2>&1; then
-  echo "==> web already running"
+# A running server is a previous build. Rebuilding every run is a few seconds
+# and stops the suite silently testing yesterday's bundle.
+if [ "${E2E_REUSE_WEB:-0}" = "1" ] && curl -sf http://127.0.0.1:3000/login >/dev/null 2>&1; then
+  echo "==> reusing the running web server (E2E_REUSE_WEB=1)"
 else
+  pkill -f "next-server" 2>/dev/null || true
   echo "==> building and starting web on :3000"
   ( cd "$ROOT/apps/web" && npm run build >"$LOGS/e2e-web-build.log" 2>&1 ) || {
     echo "!! web build failed, see $LOGS/e2e-web-build.log" >&2; exit 1; }

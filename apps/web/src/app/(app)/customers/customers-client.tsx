@@ -3,13 +3,13 @@
 import { MoreHorizontal, Pencil, Plus, Users } from "lucide-react";
 import { useState } from "react";
 
+import { DataPanel, PanelFooter } from "@/components/data/data-panel";
 import { PageHeader } from "@/components/data/page-header";
 import { PaginationControls } from "@/components/data/pagination-controls";
 import { SearchInput } from "@/components/data/search-input";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -74,10 +74,10 @@ export function CustomersClient() {
         value={q}
         onChange={search}
         label="Search customers"
-        placeholder="Name, email or phone..."
+        placeholder="Search customers"
       />
 
-      <Card className="overflow-hidden p-0">
+      <DataPanel>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -204,11 +204,12 @@ export function CustomersClient() {
             </TableBody>
           </Table>
         </div>
-      </Card>
-
-      {query.data ? (
-        <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="customers" />
-      ) : null}
+        {query.data && query.data.meta.total > 0 ? (
+          <PanelFooter>
+            <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="customers" />
+          </PanelFooter>
+        ) : null}
+      </DataPanel>
 
       <CustomerFormDialog open={formOpen} onOpenChange={setFormOpen} customer={editing} />
       <CustomerDetailSheet
