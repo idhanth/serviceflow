@@ -1,0 +1,63 @@
+name: Deploy
+
+# Deploys the API, worker and beat to the Oracle Cloud VM. The frontend deploys
+# itself: Vercel builds on push to main through its GitHub integration.
+#
+# Nothing here runs until the four secrets exist, so the workflow is inert on a
+# fork or before the infrastructure is set up rather than failing every push.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  api:
+    name: API, worker and beat
+    runs-on: ubuntu-latest
+    # Only after CI has passed on this commit.
+    steps:
+      - name: Check the deployment is configured
+        id: configured
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          REPO: ${{ secrets.DEPLOY_REPO }}
+        run: |
+          if [ -n "$HOST" ] && [ -n "$USER" ] && [ -n "$KEY" ] && [ -n "$REPO" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Deployment secrets are not set; skipping."
+          fi
+
+      - name: Install the deploy key
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          # deploy.sh clones the ref, builds the venv, runs migrations once and
+          # only then switches the symlink and restarts the three services.
+          # Runs as the service account, which bootstrap.sh grants to members of
+          # sudo without a password. The deploy user never owns the release tree.
+          ssh -o BatchMode=yes "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "sudo -u serviceflow -H SERVICEFLOW_REPO='${{ secrets.DEPLOY_REPO }}' \
+             /opt/serviceflow/deploy.sh ${{ github.sha }}"
+
+      - name: Verify the deployment answers
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          BASE="https://${{ secrets.DEPLOY_HOST }}"
+          curl -fsS "$BASE/health" | tee /dev/stderr | grep -q '"ok"'
+          curl -fsS "$BASE/ready"  | tee /dev/stderr | grep -q '"ready"'

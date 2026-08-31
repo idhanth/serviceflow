@@ -188,8 +188,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth_provider = build_auth_provider(settings)
     logger.info(
         "api starting",
-        extra={"environment": settings.environment, "auth_provider": settings.auth_provider},
+        extra={
+            "environment": settings.environment,
+            "auth_provider": settings.auth_provider,
+            "public_demo_mode": settings.public_demo_mode,
+            "email_provider": settings.email_provider,
+            "trusted_proxy_count": settings.trusted_proxy_count,
+            "database_pool": f"{settings.database_pool_size}+{settings.database_max_overflow}",
+        },
     )
+    # Anything questionable about this deployment is said once, loudly, in the
+    # first few lines of the log rather than discovered later.
+    for problem in settings.production_warnings():
+        logger.warning("production configuration", extra={"problem": problem})
     yield
 
 

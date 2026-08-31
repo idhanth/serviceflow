@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     # Auth. The dev provider is the default so the demo accounts in the seed data
     # work out of the box; setting clerk_secret_key switches to Clerk.
     auth_provider: Literal["dev", "clerk"] = "dev"
+    # The deployed demo is public on purpose: recruiters need to sign in as an
+    # admin, an employee and a customer without being issued credentials. The
+    # local token provider is what makes the seeded logins work, and production
+    # refuses it unless this is set deliberately - so the choice is visible in
+    # the environment rather than hidden in a code path.
+    public_demo_mode: bool = False
     jwt_secret: str = Field(default=..., min_length=32)
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 60 * 60
@@ -90,6 +96,12 @@ class Settings(BaseSettings):
     # attacker-controlled, so it is only consulted when the deployment says how
     # many hops are actually ours.
     trusted_proxy_count: int = 0
+    # A shared secret the frontend sends with every server-side call. When set,
+    # the API answers nothing else. That is what makes the forwarded client
+    # address trustworthy: a request with a hand-written X-Forwarded-For cannot
+    # reach the application at all. Empty in development, where the API is only
+    # reachable on localhost anyway.
+    api_proxy_token: str | None = None
 
     # ---- Realtime -----------------------------------------------------
     sse_keepalive_seconds: int = 20
@@ -114,6 +126,35 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    def production_warnings(self) -> list[str]:
+        """Settings that are wrong or risky for a production deployment.
+
+        Returned rather than raised: the process still starts, because refusing
+        to boot over a CORS list is its own kind of outage. They are logged at
+        WARNING on startup so they show up in the first log line an operator
+        reads.
+        """
+        problems: list[str] = []
+        if not self.is_production:
+            return problems
+
+        if self.debug:
+            problems.append("DEBUG is on in production")
+        if self.auth_provider == "dev" and self.public_demo_mode:
+            problems.append(
+                "PUBLIC_DEMO_MODE is on: anyone can sign in with the seeded demo accounts"
+            )
+        if "localhost" in str(self.cors_origins) or "127.0.0.1" in str(self.cors_origins):
+            problems.append("CORS_ORIGINS still contains a local address")
+        if self.trusted_proxy_count == 0:
+            problems.append(
+                "TRUSTED_PROXY_COUNT is 0 behind a proxy: rate limits will count the "
+                "proxy rather than the caller"
+            )
+        if self.email_provider == "smtp":
+            problems.append("EMAIL_PROVIDER is smtp; production mail needs a real provider")
+        return problems
 
 
 @lru_cache(maxsize=1)

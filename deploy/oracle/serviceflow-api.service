@@ -1,0 +1,31 @@
+[Unit]
+Description=ServiceFlow API (FastAPI/uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=serviceflow
+Group=serviceflow
+WorkingDirectory=/opt/serviceflow/current/apps/api
+EnvironmentFile=/etc/serviceflow/api.env
+
+# Two workers on a 2-OCPU box: enough to keep serving while one is busy, few
+# enough that the pool below stays inside the database's connection budget.
+ExecStart=/opt/serviceflow/current/apps/api/.venv/bin/uvicorn serviceflow.main:app \
+  --host 127.0.0.1 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips 127.0.0.1
+
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# The API listens on loopback only; Caddy is the only thing that can reach it.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/serviceflow
+
+[Install]
+WantedBy=multi-user.target

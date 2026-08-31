@@ -96,8 +96,18 @@ class ClerkAuthProvider:
 
 
 def build_auth_provider(settings: Settings) -> AuthProvider:
+    """Pick the provider, refusing the local one in production by default.
+
+    The guard stays: shipping local token issuance to production by accident is
+    exactly the mistake it exists to prevent. A public demo is not an accident,
+    so it has to say so - `PUBLIC_DEMO_MODE=true` - and that decision is then
+    visible in the environment and in the startup log.
+    """
     if settings.auth_provider == "clerk":
         return ClerkAuthProvider(settings)
-    if settings.is_production:
-        raise RuntimeError("The dev auth provider must not be used in production.")
+    if settings.is_production and not settings.public_demo_mode:
+        raise RuntimeError(
+            "The dev auth provider must not be used in production. Set AUTH_PROVIDER=clerk, "
+            "or PUBLIC_DEMO_MODE=true if this deployment is a deliberately public demo."
+        )
     return DevJWTAuthProvider(settings)

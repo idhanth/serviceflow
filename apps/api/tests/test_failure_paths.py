@@ -435,3 +435,49 @@ def test_an_unknown_resource_and_a_foreign_one_read_identically(
     assert foreign.status_code == missing.status_code == 404
     assert foreign.json()["error"]["code"] == missing.json()["error"]["code"]
     assert foreign.json()["error"]["message"] == missing.json()["error"]["message"]
+
+
+# ------------------------------------------------------- the deployment edge
+
+
+def test_the_api_refuses_requests_that_did_not_come_through_the_proxy(
+    db: Session, organization: Organization, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In production the API is private to the frontend that sits in front of it.
+
+    That is what makes the forwarded client address believable: a request with a
+    hand-written X-Forwarded-For cannot reach the application at all.
+    """
+    from serviceflow.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "api_proxy_token", "a-shared-secret", raising=False)
+
+    with TestClient(create_app()) as client:
+        # Liveness and readiness stay open so probes need no credential.
+        assert client.get("/health").status_code == 200
+
+        refused = client.get("/api/v1/customers")
+        assert refused.status_code == 403
+        assert refused.json()["error"]["code"] == "FORBIDDEN"
+        assert_safe(refused.text)
+        # It says nothing about a token existing.
+        assert "token" not in refused.text.lower()
+        assert "proxy" not in refused.text.lower()
+
+        # With the secret it is an ordinary request again - unauthenticated,
+        # because no session was presented.
+        allowed = client.get("/api/v1/customers", headers={"X-Proxy-Token": "a-shared-secret"})
+        assert allowed.status_code == 401
+
+
+def test_a_wrong_proxy_token_is_refused(
+    db: Session, organization: Organization, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from serviceflow.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "api_proxy_token", "a-shared-secret", raising=False)
+
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v1/customers", headers={"X-Proxy-Token": "wrong"})
+        assert response.status_code == 403

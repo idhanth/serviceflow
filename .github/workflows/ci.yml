@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Throwaway, for the ephemeral containers in this run only. Settings requires
+  # at least 32 characters, and CI needs a value to boot at all. Real secrets
+  # live in the repository's Actions secrets and are never written here.
   JWT_SECRET: ci-secret-that-is-definitely-long-enough-1234
 
 jobs:
@@ -36,23 +39,55 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://serviceflow:serviceflow@127.0.0.1:5433/serviceflow
       REDIS_URL: redis://127.0.0.1:6380/0
+      S3_ENDPOINT_URL: http://127.0.0.1:9000
+      S3_BUCKET: serviceflow-media
+      S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: serviceflow
+      AWS_SECRET_ACCESS_KEY: serviceflow-dev-secret
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
     defaults:
       run:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v4
+
+      # MinIO and MailPit are started here rather than as service containers
+      # because both need a command, which the services block cannot set. The
+      # suite genuinely uploads to MinIO and reads mail out of MailPit - a run
+      # without them fails at collection, because the bucket fixture is
+      # session-scoped and autouse.
+      - name: Start object storage and mail capture
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=serviceflow \
+            -e MINIO_ROOT_PASSWORD=serviceflow-dev-secret \
+            minio/minio:latest server /data
+          docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit:latest
+          for _ in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null \
+              && curl -sf http://127.0.0.1:8025/api/v1/info >/dev/null && exit 0
+            sleep 2
+          done
+          echo "storage or mail capture did not come up" >&2
+          docker logs minio; docker logs mailpit
+          exit 1
+
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv sync --extra dev --frozen
+
       - name: Lint
         run: |
           uv run ruff check .
           uv run ruff format --check .
       - name: Typecheck
         run: uv run mypy src
-      - name: Migrations apply cleanly
-        run: uv run alembic upgrade head
+      - name: Migrations apply and reverse cleanly
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
       - name: Tests
         run: uv run pytest
 
@@ -76,3 +111,102 @@ jobs:
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
+
+  e2e:
+    name: E2E - Playwright against the real stack
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: serviceflow
+          POSTGRES_PASSWORD: serviceflow
+          POSTGRES_DB: serviceflow
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U serviceflow"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://serviceflow:serviceflow@127.0.0.1:5433/serviceflow
+      REDIS_URL: redis://127.0.0.1:6380/0
+      S3_ENDPOINT_URL: http://127.0.0.1:9000
+      S3_BUCKET: serviceflow-media
+      S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: serviceflow
+      AWS_SECRET_ACCESS_KEY: serviceflow-dev-secret
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
+      API_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start object storage and mail capture
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=serviceflow \
+            -e MINIO_ROOT_PASSWORD=serviceflow-dev-secret \
+            minio/minio:latest server /data
+          docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit:latest
+          for _ in $(seq 1 40); do
+            curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null \
+              && curl -sf http://127.0.0.1:8025/api/v1/info >/dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Prepare the API
+        working-directory: apps/api
+        run: |
+          uv sync --extra dev --frozen
+          uv run alembic upgrade head
+          # The E2E suite drives the seeded demo organization. This is the CI
+          # database, created fresh above - the seed is never run anywhere else.
+          uv run python -m serviceflow.db.seed
+          uv run uvicorn serviceflow.main:app --host 127.0.0.1 --port 8000 --log-level warning &
+          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8000/health && break; sleep 2; done
+
+      - name: Start the worker
+        working-directory: apps/api
+        run: |
+          uv run celery -A serviceflow.worker.celery_app worker --loglevel=warning --concurrency=2 &
+          sleep 5
+
+      - name: Build and serve the frontend
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run build
+          npm run start &
+          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:3000/login && break; sleep 2; done
+
+      - name: Playwright
+        working-directory: apps/web
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3000
+          E2E_API_URL: http://127.0.0.1:8000
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: apps/web/test-results/
+          retention-days: 7

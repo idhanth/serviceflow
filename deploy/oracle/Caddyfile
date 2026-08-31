@@ -1,0 +1,48 @@
+# ServiceFlow API edge.
+#
+# Caddy terminates TLS (Let's Encrypt, automatic) and is the only thing that can
+# reach uvicorn, which listens on loopback. Two jobs beyond TLS:
+#
+#   1. Reject anything that did not come from the frontend. The API believes the
+#      client address in X-Forwarded-For, so it must be unreachable to everyone
+#      else - otherwise a forged header would let a caller evade rate limits.
+#      /health and /ready stay open so uptime checks need no credential.
+#
+#   2. Append the connecting address to X-Forwarded-For. The frontend has
+#      already put the browser's address first, so the API sees
+#      [browser, frontend] and TRUSTED_PROXY_COUNT=2 selects the browser.
+#
+# Replace api.example.com with the hostname you point at this machine.
+
+api.example.com {
+	encode zstd gzip
+
+	# Probes: open, no secret required.
+	@probe path /health /ready
+	handle @probe {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Everything else must present the shared secret. {$API_PROXY_TOKEN} comes
+	# from Caddy's environment (see /etc/systemd/system/caddy.service.d/).
+	@unauthorised not header X-Proxy-Token {$API_PROXY_TOKEN}
+	handle @unauthorised {
+		header Content-Type application/json
+		respond `{"error":{"code":"FORBIDDEN","message":"This request isn't allowed."}}` 403
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8000 {
+			# Server-Sent Events must not be buffered or the stream never flushes.
+			flush_interval -1
+			transport http {
+				read_timeout 10m
+			}
+		}
+	}
+
+	log {
+		output file /var/log/caddy/serviceflow.log
+		format json
+	}
+}

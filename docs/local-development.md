@@ -278,9 +278,43 @@ The breakpoints worth checking are 1440, 1024, 768 and 390, in both themes. The
 design system and the rules behind it are in
 [ADR 0009](adr-0009-interface-design.md).
 
+## Production settings, locally
+
+Three settings exist only for deployment. Local development leaves all three at
+their defaults, and should:
+
+| Setting | Local | Why it is off here |
+| --- | --- | --- |
+| `TRUSTED_PROXY_COUNT` | `0` | Nothing proxies the API, so the peer address *is* the caller. Setting it here would make the limiter read a header the browser controls. |
+| `API_PROXY_TOKEN` | unset | With it set, the API refuses every request that does not carry the token - including `curl` against `:8000`, which is how most local debugging happens. |
+| `PUBLIC_DEMO_MODE` | `false` | Only consulted when `ENVIRONMENT=production`. |
+
+To reproduce the production request path locally - to check the token gate, say -
+set `API_PROXY_TOKEN` in both `.env` and `apps/web/.env.local`, restart both, and
+remember that direct calls to `:8000` will then be refused. `/health` and
+`/ready` stay open.
+
+The startup log prints the deployment configuration and warns about anything
+unsafe when `ENVIRONMENT=production`:
+
+```bash
+ENVIRONMENT=production DEBUG=true uv run python -c "
+from serviceflow.core.config import Settings
+print(Settings().production_warnings())"
+```
+
 ## Checks
 
 ```bash
-cd apps/api && uv run ruff check . && uv run mypy src && uv run pytest
+cd apps/api && uv run ruff check . && uv run ruff format --check . \
+  && uv run mypy src && uv run pytest
 cd apps/web && npx eslint . && npx tsc --noEmit && npm run build
+./scripts/e2e.sh                                  # browser, against the real stack
+./scripts/smoke.sh http://localhost:3000          # the deployment acceptance test
 ```
+
+`smoke.sh` is written for a deployed URL. Run against `http://localhost:3000` it
+passes everything except the two production-only assertions - HTTPS, and the
+object-storage host - and says so before it starts. It repeatedly signs in, so
+back-to-back runs will trip the login limiter; that is the limiter working.
+

@@ -4,12 +4,17 @@ Operations platform for small service businesses - bookings, scheduling, job
 assignment and progress tracking. The reference deployment is an auto detailing
 shop; the domain model is business-type agnostic.
 
-**Status: Phase 9 of 10 complete** — the product now has an interface to match
-the engineering: one type scale, one accent, one status system, tables built for
-scanning a working day, and a dashboard that answers what needs a decision
-rather than greeting you. It is backed by evidence too — 28 Playwright tests
-drive the real browser through all three roles, 81 tests hold real threads
-against real PostgreSQL and Redis, and the load numbers below were measured.
+**Status: all 10 phases built. Not yet deployed.** The production deployment is
+written and scripted end to end — systemd units, reverse proxy, CI, CD and an
+acceptance test that drives the real workflow against a live URL — but it has
+not been provisioned, because doing so needs accounts only the owner can create.
+Nothing below describes a running service, and there is no live URL to give yet.
+[docs/deployment.md](docs/deployment.md) is the runbook; this section will carry
+the link once it is genuinely live.
+
+Everything else is real and verifiable on your own machine: 28 Playwright tests
+drive a browser through all three roles, 81 tests hold real threads against real
+PostgreSQL and Redis, and the load numbers below were measured, not estimated.
 See [Roadmap](#roadmap).
 
 ## Stack
@@ -21,8 +26,10 @@ See [Roadmap](#roadmap).
 | Database | PostgreSQL 16 |
 | Cache / queue | Redis — Celery broker and realtime pub/sub |
 | Email | Provider-agnostic — MailPit over SMTP locally, Resend in production |
-| Object storage | S3-compatible — MinIO locally, AWS S3 in production |
+| Object storage | S3-compatible — MinIO locally, Cloudflare R2 in production |
 | Auth | Pluggable - local tokens by default, Clerk by configuration ([ADR 0001](docs/adr-0001-authentication-provider.md)) |
+| Hosting | Vercel (frontend); one always-free ARM VM running uvicorn, Celery worker and beat under systemd behind Caddy |
+| CI/CD | GitHub Actions — lint, types, pytest and Playwright against real services; deploy over SSH |
 
 ## Quick start
 
@@ -71,6 +78,29 @@ deterministic and idempotent — rerunning it changes nothing — and it schedul
 around working hours, so no seeded job overlaps another. It also adds 68 job
 notes, 24 photos (uploaded to object storage for real) and a short notification
 history for the demo customer.
+
+## Screenshots
+
+The shop's day, for the person who has to run it.
+
+![Admin overview](docs/screenshots/readme-admin-dashboard-1440-light.png)
+*What needs a decision right now: today's schedule on the left, the queue
+waiting on a yes on the right. No greeting, no invented growth metrics.*
+
+![Jobs](docs/screenshots/readme-admin-jobs-1440-light.png)
+*Every job in the shop as a table, because the task is comparing rows — who is
+working, on what, when, for how long. Not a card per job.*
+
+![Calendar](docs/screenshots/readme-admin-calendar-1440-light.png)
+*The week in the shop's timezone, which is labelled rather than assumed.
+Overlapping work splits into lanes instead of drawing over itself.*
+
+![Customer overview](docs/screenshots/readme-customer-dashboard-1440-light.png)
+*The same system, seen by a customer: their next appointment, their history, and
+nothing about anyone else's — served by the same API, scoped by role.*
+
+More, including dark mode and the 390px layouts, in
+[ADR 0009](docs/adr-0009-interface-design.md).
 
 ## Architecture
 
@@ -146,6 +176,67 @@ Three decisions worth knowing up front:
   person and a request id that also appears in the logs. No exception text, SQL,
   stack frame or filesystem path reaches a client, and a rejected password is
   never echoed back in a validation message.
+
+## Deployment
+
+Not provisioned. Everything needed to provision it is in the repository, and
+[docs/deployment.md](docs/deployment.md) is the step-by-step runbook.
+
+The design target was a production deployment that costs nothing and cuts no
+corners to get there:
+
+```
+browser ──HTTPS──▶ Vercel (Next.js)  ──HTTPS, X-Proxy-Token──▶  Oracle Cloud VM
+                   session cookie                                Caddy (TLS)
+                   set here                                      uvicorn x2
+                                                                 celery worker
+                                                                 celery beat
+                                                                      │
+                                          Neon · Upstash · Cloudflare R2 · Resend
+```
+
+The browser only ever talks to the Next.js server, which forwards to the API
+server-side. That is what keeps the session cookie `Secure`, `HttpOnly` and
+first-party without any cross-origin compromise — the constraint that decided
+the whole layout.
+
+**Why the API is not serverless.** Celery beat is a clock that has to keep
+running, and workers have to outlive the request that queued their work. A
+request-scoped runtime would leave the queue with no consumer, so the API,
+worker and beat run as three systemd units on one small always-free ARM VM.
+Measured footprint is about 250 MB RSS for all three.
+
+**The forwarded address is made unforgeable, not merely trusted.** The API
+identifies unauthenticated callers by IP for rate limiting, so a client that
+could reach it directly could rewrite `X-Forwarded-For` and walk past the login
+limiter. uvicorn binds to loopback, the firewall opens only 80 and 443, and the
+frontend sends a shared `X-Proxy-Token` that both Caddy *and* the API check
+independently — so a mistake in the edge config cannot quietly expose the
+service. `TRUSTED_PROXY_COUNT=2` then names the exact hop to believe.
+
+**Pool sizing is arithmetic that is written down.** Two uvicorn workers plus one
+Celery worker is `3 × (5 + 5) = 30` connections against the provider's ceiling.
+`DATABASE_POOL_TIMEOUT` stays at 5s so that saturation keeps degrading the way
+phase 8 measured — a deliberate `503` with `Retry-After`, never a generic 500.
+
+**Nothing can seed a live database by accident.** The seed writes a synthetic
+book of business — 80 customers, 266 bookings — into whatever database it is
+pointed at, so no service unit, no deploy step and no HTTP route can reach it.
+Seeding a deployment is a manual act against a database you name.
+
+CI runs on every push: Ruff, `ruff format --check`, mypy strict and the full
+pytest suite against real PostgreSQL, Redis, MinIO and MailPit service
+containers; ESLint, `tsc --noEmit` and a production build for the frontend; then
+the Playwright suite against the whole stack. Infrastructure is never swapped
+for mocks to make CI convenient. Deployment is a separate workflow that stays
+inert until its secrets exist.
+
+Once deployed, `./scripts/smoke.sh <url>` is the acceptance test: it signs in as
+all three roles, books into a slot it finds free on the technician's real
+calendar, replays the request to prove idempotency, confirms it, works the job,
+checks that an internal note never reaches the customer, that the presigned
+upload is short-lived and points at the configured bucket, and that the Celery
+worker actually drained the email outbox.
 
 ## Testing
 
@@ -233,6 +324,30 @@ whether any employee was double-booked and whether anything crossed a tenant
 boundary. After 3,834 bookings created under load: all zero, and 3,834 keys
 mapping to 3,834 distinct bookings.
 
+## Known limitations
+
+Stated plainly, because a portfolio project that claims none is not being honest.
+
+- **It is not deployed.** No uptime, no production traffic, no real users and no
+  production throughput figures exist, and none are claimed anywhere here.
+- **The load numbers are from one laptop**, with the API, PostgreSQL and k6 all
+  competing for the same cores. They characterise behaviour under contention;
+  they are not a capacity estimate for any server.
+- **The planned production host is a single free-tier VM.** No redundancy, no
+  failover, and Oracle's Always Free tier may reclaim instances it considers
+  idle. It is the right trade for a demo and the wrong one for a business.
+- **Email is at-least-once, not exactly-once.** A provider timeout after a
+  successful send can produce a duplicate. The outbox guarantees delivery is
+  attempted and retried, not that it happens precisely once.
+- **The demo's auth is the local token provider**, enabled deliberately with
+  `PUBLIC_DEMO_MODE` so that published credentials work. A real tenant would set
+  `AUTH_PROVIDER=clerk`; the API refuses to start otherwise in production.
+- **Single-region, single-database.** No read replicas, no sharding, no
+  multi-region story. Tenant isolation is enforced per-query and tested, but
+  every tenant shares one database.
+- **The seed's history is synthetic.** 250 bookings and 199 jobs are generated
+  demo data — a plausible book of business, not a real one.
+
 ## Roadmap
 
 | Phase | Scope | Status |
@@ -246,6 +361,6 @@ mapping to 3,834 distinct bookings.
 | 7 | Idempotency, audit logs, rate limiting, observability | done |
 | 8 | Integration, E2E, concurrency and load tests | done |
 | 9 | UI polish, responsive, dark mode | done |
-| 10 | CI/CD, production infrastructure, monitoring | next |
+| 10 | CI/CD, production infrastructure, monitoring | built, not deployed |
 
 Full specification: [docs/PRD.md](docs/PRD.md).

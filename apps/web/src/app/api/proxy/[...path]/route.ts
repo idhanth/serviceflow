@@ -5,6 +5,7 @@ import {
   getActiveOrganizationId,
   getSessionToken,
 } from "@/lib/session";
+import { upstreamHeaders } from "@/lib/upstream";
 
 /**
  * Server-side pass-through to the API. Browser code calls /api/proxy/... and the
@@ -24,8 +25,7 @@ async function forward(request: Request, path: string[]) {
   const search = new URL(request.url).search;
   const target = `${API_BASE_URL}/api/v1/${path.join("/")}${search}`;
 
-  const headers = new Headers();
-  headers.set("Authorization", `Bearer ${token}`);
+  const headers = upstreamHeaders(request, { Authorization: `Bearer ${token}` });
   if (organizationId) headers.set("X-Organization-Id", organizationId);
 
   const contentType = request.headers.get("content-type");

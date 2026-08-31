@@ -3,6 +3,7 @@ import {
   getActiveOrganizationId,
   getSessionToken,
 } from "@/lib/session";
+import { upstreamHeaders } from "@/lib/upstream";
 
 /**
  * Streams the API's SSE feed to the browser.
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
     return new Response("unauthorized", { status: 401 });
   }
 
-  const headers = new Headers({
+  const headers = upstreamHeaders(request, {
     Authorization: `Bearer ${token}`,
     Accept: "text/event-stream",
   });
