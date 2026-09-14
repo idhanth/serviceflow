@@ -130,9 +130,9 @@ def confirm_a_booking(
     client: TestClient, db: Session, organization: Organization
 ) -> dict[str, Any]:
     """A confirmed booking, which is the point at which the customer is emailed."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -202,10 +202,10 @@ def test_the_sweep_finds_what_the_outage_missed(
 def test_an_employee_deactivated_before_confirmation_cannot_be_assigned(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     deactivated = client.patch(
         f"/api/v1/employees/{setup['employee'].id}", headers=headers, json={"active": False}
@@ -230,7 +230,7 @@ def test_a_deactivated_employee_loses_access_to_their_own_jobs(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """Lost authorization mid-session: the token still parses, access does not."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     parties = job_with_parties(db, organization)
     employee_headers = auth_headers(client, parties["employee_user"])
 
@@ -250,7 +250,7 @@ def test_a_deactivated_employee_loses_access_to_their_own_jobs(
 def test_a_deactivated_service_cannot_be_booked_but_its_history_survives(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     customer_headers = auth_headers(client, setup["customer_user"])
 
@@ -258,7 +258,6 @@ def test_a_deactivated_service_cannot_be_booked_but_its_history_survives(
         "/api/v1/bookings",
         headers=customer_headers,
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -274,7 +273,6 @@ def test_a_deactivated_service_cannot_be_booked_but_its_history_survives(
         "/api/v1/bookings",
         headers=customer_headers,
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start(days=6).isoformat(),
         },
@@ -309,7 +307,6 @@ def test_a_booking_that_fails_mid_transaction_leaves_nothing_behind(
             "/api/v1/bookings",
             headers=headers,
             json={
-                "vehicle_id": str(setup["vehicle"].id),
                 "service_id": str(setup["service"].id),
                 "requested_start": future_start().isoformat(),
             },
@@ -337,7 +334,7 @@ def test_a_saturated_connection_pool_asks_the_caller_to_come_back(
 
     from serviceflow.services import customers as customers_service
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     def exhausted(*args: Any, **kwargs: Any) -> None:
@@ -372,7 +369,7 @@ def test_a_database_that_refuses_connections_reads_as_congestion(
 
     from serviceflow.services import customers as customers_service
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     def refused(*args: Any, **kwargs: Any) -> None:
@@ -403,7 +400,7 @@ def test_a_database_error_that_is_not_congestion_is_still_an_error(
 
     from serviceflow.services import customers as customers_service
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     def broken(*args: Any, **kwargs: Any) -> None:
@@ -428,7 +425,7 @@ def test_an_unknown_resource_and_a_foreign_one_read_identically(
     other = booking_setup(db, organization)
     headers = auth_headers(client, setup["customer_user"])
 
-    theirs = make_booking(db, organization, other["customer"], other["vehicle"], other["service"])
+    theirs = make_booking(db, organization, other["customer"], other["service"])
     foreign = client.get(f"/api/v1/bookings/{theirs.id}", headers=headers)
     missing = client.get(f"/api/v1/bookings/{uuid.uuid4()}", headers=headers)
 

@@ -54,18 +54,10 @@ def test_a_new_signup_can_book_immediately(
     ).json()
     headers = {"Authorization": f"Bearer {signup['access_token']}"}
 
-    vehicle = client.post(
-        "/api/v1/vehicles",
-        headers=headers,
-        json={"year": 2024, "make": "Tesla", "model": "Model 3"},
-    )
-    assert vehicle.status_code == 201
-
     booking = client.post(
         "/api/v1/bookings",
         headers=headers,
         json={
-            "vehicle_id": vehicle.json()["data"]["id"],
             "service_id": str(service.id),
             "requested_start": future_start().isoformat(),
         },

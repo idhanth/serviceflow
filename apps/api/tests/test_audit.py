@@ -50,7 +50,7 @@ def entry(db: Session, action: AuditAction) -> AuditLog:
 def test_booking_lifecycle_is_recorded(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -58,7 +58,6 @@ def test_booking_lifecycle_is_recorded(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -96,7 +95,7 @@ def test_a_jobs_whole_life_is_reachable_by_its_own_id(
     Filed against the booking instead, an admin filtering the feed by a job id
     would see it start and finish but never see who assigned it.
     """
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     setup = booking_setup(db, organization)
 
@@ -104,7 +103,6 @@ def test_a_jobs_whole_life_is_reachable_by_its_own_id(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -134,7 +132,7 @@ def test_a_jobs_whole_life_is_reachable_by_its_own_id(
 def test_customer_records_are_audited_without_copying_personal_data(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     created = client.post(
@@ -167,13 +165,12 @@ def test_customer_records_are_audited_without_copying_personal_data(
 
 
 def test_rejection_is_recorded(client: TestClient, db: Session, organization: Organization) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -200,7 +197,7 @@ def test_job_lifecycle_is_recorded(
 def test_reassignment_records_both_technicians(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     parties = job_with_parties(db, organization)
     colleague = make_employee(
         db, organization, email="colleague@example.com", services=[parties["service"]]
@@ -220,7 +217,7 @@ def test_reassignment_records_both_technicians(
 def test_employee_and_service_changes_are_recorded(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     created = client.post(
@@ -247,7 +244,7 @@ def test_employee_and_service_changes_are_recorded(
 def test_availability_changes_are_recorded(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     employee = make_employee(db, organization, email="tech@example.com")
     headers = auth_headers(client, admin)
     tomorrow = (dt.date.today() + dt.timedelta(days=1)).isoformat()
@@ -301,13 +298,12 @@ def test_the_actor_and_organization_come_from_the_session(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """Never from the request body - a client cannot attribute an action."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -353,13 +349,12 @@ def test_a_rolled_back_action_leaves_no_audit_row(
         def check_assignment(self, session, request: AssignmentRequest) -> None:  # type: ignore[no-untyped-def]
             raise DependencyUnavailable("Scheduling is unavailable.")
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -412,7 +407,7 @@ def test_an_audit_row_cannot_be_updated_or_deleted(
 def test_no_route_writes_to_the_activity_feed(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     payload = {"action": "BOOKING_CREATED", "resource_type": "booking"}
 
@@ -437,7 +432,7 @@ def test_only_admins_read_the_activity_feed(
 def test_the_feed_is_isolated_across_organizations(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     rival = make_organization(db, name="Rival Detailing")
     rival_parties = job_with_parties(db, rival)
     client.post(
@@ -453,7 +448,7 @@ def test_the_feed_is_isolated_across_organizations(
 def test_the_feed_filters_sorts_and_paginates(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     for index in range(4):
         make_service(db, organization, name=f"Service {index}")
@@ -502,7 +497,7 @@ def test_the_feed_filters_sorts_and_paginates(
 def test_the_actor_filter_list_is_scoped(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     parties = job_with_parties(db, organization)
     client.post(
         f"/api/v1/jobs/{parties['job'].id}/start",

@@ -1,4 +1,4 @@
-"""The admin activity feed (PRD 35).
+"""The activity feed: owners, managers and analysts read the audit trail.
 
 Read-only by construction: there is no route here that writes, updates or
 deletes an audit entry, and the table rejects both at the database level.
@@ -12,7 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from serviceflow.api.deps import AdminUser, DbSession
+from serviceflow.api.deps import AuditReader, DbSession
 from serviceflow.core.pagination import Pagination
 from serviceflow.db.models.enums import AuditAction
 from serviceflow.schemas.audit import AuditActor, AuditEntryRead
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/activity", tags=["activity"])
 
 @router.get("", response_model=PagedResponse[AuditEntryRead], summary="Activity feed")
 def list_activity(
-    current_user: AdminUser,
+    current_user: AuditReader,
     db: DbSession,
     pagination: Pagination,
     actor_user_id: Annotated[uuid.UUID | None, Query()] = None,
@@ -57,7 +57,7 @@ def list_activity(
 
 
 @router.get("/actors", response_model=DataResponse[list[AuditActor]], summary="Actors in the trail")
-def list_actors(current_user: AdminUser, db: DbSession) -> DataResponse[list[AuditActor]]:
+def list_actors(current_user: AuditReader, db: DbSession) -> DataResponse[list[AuditActor]]:
     rows = audit.distinct_actors(db, current_user.organization_id)
     return DataResponse[list[AuditActor]](
         data=[AuditActor(id=actor_id, full_name=name) for actor_id, name in rows]

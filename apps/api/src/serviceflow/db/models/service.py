@@ -16,7 +16,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from serviceflow.db.base import Base, Timestamps, UUIDPrimaryKey
-from serviceflow.db.models.employee import employee_services
 from serviceflow.db.models.mixins import OrganizationScoped
 
 if TYPE_CHECKING:
@@ -29,6 +28,8 @@ class Service(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
     __tablename__ = "services"
     __table_args__ = (
         UniqueConstraint("organization_id", "name"),
+        # Target for the composite (organization_id, service_id) foreign keys.
+        UniqueConstraint("organization_id", "id"),
         CheckConstraint("duration_minutes > 0", name="duration_positive"),
         CheckConstraint("base_price >= 0", name="price_not_negative"),
         Index("ix_services_organization_id_active", "organization_id", "active"),
@@ -42,5 +43,8 @@ class Service(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
     image_url: Mapped[str | None] = mapped_column(Text)
 
     employees: Mapped[list[Employee]] = relationship(
-        secondary=employee_services, back_populates="services"
+        secondary="employee_services",
+        primaryjoin="Service.id == EmployeeService.service_id",
+        secondaryjoin="Employee.id == EmployeeService.employee_id",
+        viewonly=True,
     )

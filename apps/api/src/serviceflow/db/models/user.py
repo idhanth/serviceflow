@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Text
+from sqlalchemy import Boolean, String, Text, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from serviceflow.db.base import Base, Timestamps, UUIDPrimaryKey
@@ -28,6 +28,12 @@ class User(UUIDPrimaryKey, Timestamps, Base):
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40))
     avatar_url: Mapped[str | None] = mapped_column(Text)
+
+    # The seventh role. Platform administration is not held inside a tenant, so it
+    # is a property of the person rather than a membership.
+    is_platform_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     # Only populated by the dev auth provider; Clerk owns credentials otherwise.
     password_hash: Mapped[str | None] = mapped_column(Text)

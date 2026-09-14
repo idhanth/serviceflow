@@ -1,7 +1,7 @@
 """Service catalog endpoints.
 
 Everyone in the organization can read the catalog - customers need it to book -
-but only admins may change it.
+but only owners and managers may change it.
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
+from serviceflow.api.deps import ActiveUser, DbSession, ServicesWriter
+from serviceflow.auth.permissions import Permission as P
 from serviceflow.core.errors import NotFound
 from serviceflow.core.pagination import Pagination, parse_sort
-from serviceflow.db.models.enums import Role
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
 from serviceflow.schemas.service import ServiceCreate, ServiceRead, ServiceUpdate
 from serviceflow.services import catalog
@@ -33,7 +33,9 @@ def list_services(
 ) -> PagedResponse[ServiceRead]:
     # Non-admins never see retired offerings: their `active` filter is ignored
     # rather than honoured, so no query path can surface a retired service.
-    effective_active = active if current_user.has_role(Role.ADMIN) else True
+    effective_active = (
+        active if current_user.can(P.SERVICES_READ_RETIRED, P.SERVICES_WRITE) else True
+    )
     page = catalog.list_services(
         db,
         current_user.organization_id,
@@ -55,7 +57,7 @@ def get_service(
     service_id: uuid.UUID, current_user: ActiveUser, db: DbSession
 ) -> DataResponse[ServiceRead]:
     service = catalog.get_service(db, current_user.organization_id, service_id)
-    if not service.active and not current_user.has_role(Role.ADMIN):
+    if not service.active and not current_user.can(P.SERVICES_READ_RETIRED, P.SERVICES_WRITE):
         raise NotFound("We couldn't find that service.")
     return DataResponse[ServiceRead](data=ServiceRead.from_model(service))
 
@@ -67,7 +69,7 @@ def get_service(
     summary="Create a service",
 )
 def create_service(
-    payload: ServiceCreate, current_user: AdminUser, db: DbSession
+    payload: ServiceCreate, current_user: ServicesWriter, db: DbSession
 ) -> DataResponse[ServiceRead]:
     service = catalog.create_service(
         db,
@@ -84,7 +86,7 @@ def create_service(
 
 @router.patch("/{service_id}", response_model=DataResponse[ServiceRead], summary="Update a service")
 def update_service(
-    service_id: uuid.UUID, payload: ServiceUpdate, current_user: AdminUser, db: DbSession
+    service_id: uuid.UUID, payload: ServiceUpdate, current_user: ServicesWriter, db: DbSession
 ) -> DataResponse[ServiceRead]:
     service = catalog.update_service(
         db,
@@ -102,7 +104,7 @@ def update_service(
     summary="Retire a service (soft delete)",
 )
 def deactivate_service(
-    service_id: uuid.UUID, current_user: AdminUser, db: DbSession
+    service_id: uuid.UUID, current_user: ServicesWriter, db: DbSession
 ) -> DataResponse[ServiceRead]:
     """Deactivates rather than deletes: bookings and jobs will reference services."""
     service = catalog.deactivate_service(

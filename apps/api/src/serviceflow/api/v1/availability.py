@@ -1,7 +1,7 @@
 """Employee availability endpoints.
 
-One set of routes serves both audiences: admins may address any employee in the
-organization, an employee only themselves. `resolve_manageable_employee` makes
+One set of routes serves both audiences: dispatchers and managers may address
+any employee in the organization, a technician only themselves. `resolve_manageable_employee` makes
 that call in the service layer, so no route can widen it.
 """
 
@@ -13,7 +13,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Response, status
 
-from serviceflow.api.deps import DbSession, EmployeeUser
+from serviceflow.api.deps import AvailabilityUser, DbSession
 from serviceflow.schemas.availability import (
     AvailabilityRead,
     OverrideInput,
@@ -42,7 +42,7 @@ def _read(db: DbSession, employee, since: dt.date | None) -> AvailabilityRead:  
 )
 def get_availability(
     employee_id: uuid.UUID,
-    current_user: EmployeeUser,
+    current_user: AvailabilityUser,
     db: DbSession,
     include_past: Annotated[bool, Query(description="Include overrides before today")] = False,
 ) -> DataResponse[AvailabilityRead]:
@@ -63,7 +63,7 @@ def get_availability(
 def replace_weekly(
     employee_id: uuid.UUID,
     payload: WeeklyScheduleUpdate,
-    current_user: EmployeeUser,
+    current_user: AvailabilityUser,
     db: DbSession,
 ) -> DataResponse[AvailabilityRead]:
     employee = schedules_service.resolve_manageable_employee(
@@ -91,7 +91,7 @@ def replace_weekly(
 def upsert_override(
     employee_id: uuid.UUID,
     payload: OverrideInput,
-    current_user: EmployeeUser,
+    current_user: AvailabilityUser,
     db: DbSession,
 ) -> DataResponse[OverrideRead]:
     """Upsert: one override per date keeps the precedence rules unambiguous."""
@@ -123,7 +123,7 @@ def upsert_override(
 def delete_override(
     employee_id: uuid.UUID,
     override_id: uuid.UUID,
-    current_user: EmployeeUser,
+    current_user: AvailabilityUser,
     db: DbSession,
 ) -> Response:
     employee = schedules_service.resolve_manageable_employee(

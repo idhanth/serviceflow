@@ -85,7 +85,7 @@ def test_a_customer_sees_only_the_notes_meant_for_them(
 
 def test_staff_see_both_kinds(client: TestClient, db: Session, organization: Organization) -> None:
     parties = job_with_parties(db, organization)
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     staff = auth_headers(client, parties["employee_user"])
     _post(client, staff, parties["job"].id, INTERNAL_TEXT, "INTERNAL")
     _post(client, staff, parties["job"].id, VISIBLE_TEXT, "CUSTOMER_VISIBLE")
@@ -178,7 +178,7 @@ def test_a_customer_cannot_write_notes(
 def test_notes_are_isolated_across_organizations(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     rival = make_organization(db, name="Rival Detailing")
     rival_parties = job_with_parties(db, rival)
     note = make_job_note(
@@ -230,7 +230,7 @@ def test_an_author_removes_their_own_note_but_not_a_colleagues(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     parties = job_with_parties(db, organization)
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     staff = auth_headers(client, parties["employee_user"])
 
     mine = _post(client, staff, parties["job"].id, "mine", "INTERNAL").json()["data"]

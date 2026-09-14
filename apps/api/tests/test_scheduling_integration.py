@@ -26,9 +26,7 @@ MONDAY = dt.datetime(2027, 6, 7, 10, 0, tzinfo=UTC)  # a Monday
 
 
 def _pending(db: Session, organization: Organization, setup: dict, start: dt.datetime):  # type: ignore[no-untyped-def]
-    booking = make_booking(
-        db, organization, setup["customer"], setup["vehicle"], setup["service"], start=start
-    )
+    booking = make_booking(db, organization, setup["customer"], setup["service"], start=start)
     booking.requested_end = start + dt.timedelta(hours=2)
     db.commit()
     return booking
@@ -45,7 +43,7 @@ def _confirm(client: TestClient, headers: dict, booking, employee):  # type: ign
 def test_confirmation_is_refused_outside_working_hours(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     employee = setup["employee"]
 
@@ -62,18 +60,18 @@ def test_confirmation_is_refused_outside_working_hours(
     response = _confirm(client, auth_headers(client, admin), booking, employee)
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "SCHEDULE_CONFLICT"
+    assert response.json()["error"]["code"] == "INVALID_SCHEDULE"
     assert "Outside working hours" in response.json()["error"]["message"]
 
     db.expire_all()
     assert db.get(Booking, booking.id).status is BookingStatus.PENDING
-    assert db.query(Job).count() == 0
+    assert db.query(Job).filter(Job.employee_id.is_not(None)).count() == 0
 
 
 def test_confirmation_is_refused_on_a_day_off(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     weekend = make_employee(
         db,
@@ -94,7 +92,7 @@ def test_confirmation_is_refused_on_a_day_off(
 def test_an_unavailable_override_blocks_an_otherwise_working_day(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     set_override(db, setup["employee"], date=MONDAY.date(), available=False, reason="Training day")
 
@@ -108,7 +106,7 @@ def test_an_unavailable_override_blocks_an_otherwise_working_day(
 def test_a_special_availability_override_permits_hours_the_week_does_not(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     evening = make_employee(
         db,
@@ -136,14 +134,14 @@ def test_a_special_availability_override_permits_hours_the_week_does_not(
     )
     accepted = _confirm(client, auth_headers(client, admin), booking, evening)
     assert accepted.status_code == 200
-    assert accepted.json()["data"]["job"]["status"] == "ASSIGNED"
+    assert accepted.json()["data"]["job"]["status"] == "SCHEDULED"
 
 
 def test_a_special_availability_override_also_withdraws_the_normal_hours(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """It replaces the weekly schedule rather than adding to it."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     set_override(
         db, setup["employee"], date=MONDAY.date(), available=True, start="18:00", end="22:00"
@@ -158,7 +156,7 @@ def test_a_special_availability_override_also_withdraws_the_normal_hours(
 def test_a_second_overlapping_assignment_is_refused(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -169,19 +167,19 @@ def test_a_second_overlapping_assignment_is_refused(
     response = _confirm(client, headers, second, setup["employee"])
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "SCHEDULE_CONFLICT"
+    assert response.json()["error"]["code"] == "BOOKING_CONFLICT"
     assert "already booked" in response.json()["error"]["message"].lower()
     assert response.json()["error"]["details"]["conflicting_job_id"]
 
     db.expire_all()
-    assert db.query(Job).count() == 1
+    assert db.query(Job).filter(Job.employee_id.is_not(None)).count() == 1
 
 
 def test_an_adjacent_assignment_is_accepted(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """10:00-12:00 then 12:00-14:00 is a full day, not a clash."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -196,7 +194,7 @@ def test_an_adjacent_assignment_is_accepted(
 def test_cancelling_frees_the_slot_for_someone_else(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -211,7 +209,7 @@ def test_cancelling_frees_the_slot_for_someone_else(
 def test_rescheduling_onto_a_busy_window_is_refused(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -227,13 +225,13 @@ def test_rescheduling_onto_a_busy_window_is_refused(
         json={"requested_start": (MONDAY + dt.timedelta(minutes=30)).isoformat()},
     )
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "SCHEDULE_CONFLICT"
+    assert response.json()["error"]["code"] == "BOOKING_CONFLICT"
 
 
 def test_rescheduling_a_job_onto_its_own_window_is_not_a_self_conflict(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -251,7 +249,7 @@ def test_rescheduling_a_job_onto_its_own_window_is_not_a_self_conflict(
 def test_reassigning_onto_a_busy_technician_is_refused(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     colleague = make_employee(
         db, organization, email="colleague@example.com", services=[setup["service"]]
@@ -269,13 +267,13 @@ def test_reassigning_onto_a_busy_technician_is_refused(
         f"/api/v1/jobs/{job_id}/assign", headers=headers, json={"employee_id": str(colleague.id)}
     )
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "SCHEDULE_CONFLICT"
+    assert response.json()["error"]["code"] == "BOOKING_CONFLICT"
 
 
 def test_reassigning_onto_someone_off_that_day_is_refused(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     weekend = make_employee(
         db,
@@ -306,7 +304,7 @@ def test_availability_is_evaluated_in_the_organizations_timezone(
     la_org.timezone = "America/Los_Angeles"
     db.commit()
 
-    admin = make_user(db, la_org, role=Role.ADMIN, email="pacific-admin@example.com")
+    admin = make_user(db, la_org, role=Role.OWNER, email="pacific-admin@example.com")
     setup = booking_setup(db, la_org)
     employee = setup["employee"]
 

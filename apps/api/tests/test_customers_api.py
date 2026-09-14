@@ -11,7 +11,7 @@ from tests.conftest import auth_headers, make_customer, make_user
 
 
 def test_admin_adds_a_customer(client: TestClient, db: Session, organization: Organization) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     response = client.post(
         "/api/v1/customers",
         headers=auth_headers(client, admin),
@@ -28,13 +28,13 @@ def test_admin_adds_a_customer(client: TestClient, db: Session, organization: Or
     assert data["user"]["email"] == "new.person@example.com"  # normalized
     assert data["user"]["full_name"] == "New Person"
     assert data["notes"] == "Prefers mornings."
-    assert data["vehicle_count"] == 0
+    assert data["booking_count"] == 0
 
 
 def test_adding_the_same_person_twice_is_rejected(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     payload = {"email": "dup@example.com", "first_name": "Dup", "last_name": "Licate"}
 
@@ -75,7 +75,7 @@ def test_customer_reads_own_profile_via_me(
 def test_me_is_404_for_someone_with_no_customer_record(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     response = client.get("/api/v1/customers/me", headers=auth_headers(client, admin))
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
@@ -84,7 +84,7 @@ def test_me_is_404_for_someone_with_no_customer_record(
 def test_admin_updates_customer_details_and_can_clear_notes(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     customer = make_customer(db, organization, notes="Original note")
     headers = auth_headers(client, admin)
 
@@ -105,7 +105,7 @@ def test_admin_updates_customer_details_and_can_clear_notes(
 def test_customer_search_matches_name_email_and_phone(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_customer(
         db, organization, email="ada.lovelace@example.com", first_name="Ada", last_name="Lovelace"
     )

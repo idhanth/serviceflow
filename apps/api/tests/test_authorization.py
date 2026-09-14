@@ -1,31 +1,42 @@
-"""PRD 6: roles are per-organization and enforced server-side."""
+"""Roles are per-organization, map to permissions, and are enforced server-side."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Annotated
+
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from serviceflow.api.deps import ActiveUser, AdminUser, EmployeeUser
+from serviceflow.api.deps import ActiveUser, require_permission
+from serviceflow.auth.permissions import Permission
+from serviceflow.auth.principal import CurrentUser
 from serviceflow.db.models.enums import MembershipStatus, Role
 from serviceflow.db.models.membership import OrganizationMembership
 from serviceflow.db.models.organization import Organization
 from serviceflow.main import create_app
-from tests.conftest import auth_headers, make_user
+from tests.conftest import auth_headers, make_organization, make_user
+
+# Module level, so FastAPI can resolve the string annotations below.
+OwnerOnly = Annotated[CurrentUser, Depends(require_permission(Permission.ORGANIZATION_MANAGE))]
+JobReaders = Annotated[
+    CurrentUser, Depends(require_permission(Permission.JOBS_READ, Permission.JOBS_WORK))
+]
 
 
 @pytest.fixture()
-def guarded_client() -> TestClient:
+def guarded_client() -> Iterator[TestClient]:
     """An app with probe routes, so guards are tested without waiting on features."""
     app: FastAPI = create_app()
 
-    @app.get("/api/v1/_probe/admin")
-    def _admin_only(user: AdminUser) -> dict[str, bool]:
+    @app.get("/api/v1/_probe/settings")
+    def _owner_only(user: OwnerOnly) -> dict[str, bool]:
         return {"ok": True}
 
-    @app.get("/api/v1/_probe/staff")
-    def _staff_only(user: EmployeeUser) -> dict[str, bool]:
+    @app.get("/api/v1/_probe/jobs")
+    def _job_readers(user: JobReaders) -> dict[str, bool]:
         return {"ok": True}
 
     @app.get("/api/v1/_probe/any")
@@ -37,34 +48,38 @@ def guarded_client() -> TestClient:
 
 
 @pytest.mark.parametrize(
-    ("role", "admin_status", "staff_status"),
+    ("role", "settings_status", "jobs_status"),
     [
-        (Role.ADMIN, 200, 200),
-        (Role.EMPLOYEE, 403, 200),
+        (Role.OWNER, 200, 200),
+        (Role.MANAGER, 403, 200),
+        (Role.DISPATCHER, 403, 200),
+        (Role.TECHNICIAN, 403, 200),
+        (Role.ANALYST, 403, 200),
         (Role.CUSTOMER, 403, 403),
     ],
 )
-def test_role_guards(
+def test_permission_guards(
     guarded_client: TestClient,
     db: Session,
     organization: Organization,
     role: Role,
-    admin_status: int,
-    staff_status: int,
+    settings_status: int,
+    jobs_status: int,
 ) -> None:
     user = make_user(db, organization, role=role)
     headers = auth_headers(guarded_client, user)
-    assert guarded_client.get("/api/v1/_probe/admin", headers=headers).status_code == admin_status
-    assert guarded_client.get("/api/v1/_probe/staff", headers=headers).status_code == staff_status
+    settings = guarded_client.get("/api/v1/_probe/settings", headers=headers)
+    assert settings.status_code == settings_status
+    if settings_status == 403:
+        assert settings.json()["error"]["code"] == "INVALID_ROLE"
+    assert guarded_client.get("/api/v1/_probe/jobs", headers=headers).status_code == jobs_status
 
 
 def test_a_role_does_not_carry_across_organizations(
     guarded_client: TestClient, db: Session, organization: Organization
 ) -> None:
-    from tests.conftest import make_organization
-
-    user = make_user(db, organization, role=Role.ADMIN)
-    second = make_organization(db, name="Second Shop")
+    user = make_user(db, organization, role=Role.OWNER)
+    second = make_organization(db, name="Harbor Plumbing")
     db.add(
         OrganizationMembership(
             organization_id=second.id,
@@ -76,16 +91,16 @@ def test_a_role_does_not_carry_across_organizations(
     db.commit()
 
     headers = auth_headers(guarded_client, user, organization)
-    assert guarded_client.get("/api/v1/_probe/admin", headers=headers).status_code == 200
+    assert guarded_client.get("/api/v1/_probe/settings", headers=headers).status_code == 200
 
     as_customer = {**headers, "X-Organization-Id": str(second.id)}
-    assert guarded_client.get("/api/v1/_probe/admin", headers=as_customer).status_code == 403
+    assert guarded_client.get("/api/v1/_probe/settings", headers=as_customer).status_code == 403
 
 
 def test_suspended_membership_loses_access(
     guarded_client: TestClient, db: Session, organization: Organization
 ) -> None:
-    user = make_user(db, organization, role=Role.ADMIN)
+    user = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(guarded_client, user)
     assert guarded_client.get("/api/v1/_probe/any", headers=headers).status_code == 200
 
@@ -93,4 +108,30 @@ def test_suspended_membership_loses_access(
     membership.status = MembershipStatus.SUSPENDED
     db.commit()
 
-    assert guarded_client.get("/api/v1/_probe/any", headers=headers).status_code == 403
+    refused = guarded_client.get("/api/v1/_probe/any", headers=headers)
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "TENANT_ACCESS_DENIED"
+
+
+def test_a_platform_admin_without_membership_cannot_read_tenant_routes(
+    guarded_client: TestClient, db: Session, organization: Organization
+) -> None:
+    from serviceflow.auth.passwords import hash_password
+    from serviceflow.db.models.user import User
+
+    admin = User(
+        auth_provider_id="dev|platform@example.com",
+        email="platform@example.com",
+        first_name="Platform",
+        last_name="Admin",
+        password_hash=hash_password("test-password-123"),
+        is_platform_admin=True,
+    )
+    db.add(admin)
+    db.commit()
+    headers = auth_headers(guarded_client, admin)
+
+    refused = guarded_client.get("/api/v1/_probe/any", headers=headers)
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "TENANT_ACCESS_DENIED"
+    assert guarded_client.get("/api/v1/platform/tenants", headers=headers).status_code == 200

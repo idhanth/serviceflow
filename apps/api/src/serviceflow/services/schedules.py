@@ -1,8 +1,8 @@
 """Managing an employee's weekly schedule and date overrides.
 
-Access follows PRD 6: an admin manages anyone in their organization, an employee
-manages their own availability and nobody else's. That decision is made here, not
-in the routes.
+Access: AVAILABILITY_MANAGE (owner, manager, dispatcher) manages anyone in the
+organization; AVAILABILITY_OWN (a technician) manages their own and nobody
+else's. That decision is made here, not in the routes.
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from serviceflow.core.errors import Forbidden, NotFound, ValidationFailed
+from serviceflow.auth.permissions import Permission as P
+from serviceflow.auth.permissions import can
+from serviceflow.core.errors import Forbidden, InvalidRole, NotFound, ValidationFailed
 from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.enums import AuditAction, Role
@@ -34,8 +36,10 @@ def resolve_manageable_employee(
     user_id: uuid.UUID,
 ) -> Employee:
     """The employee whose schedule this caller may read and change."""
-    if Role.ADMIN in roles:
+    if can(roles, P.AVAILABILITY_MANAGE):
         return get_employee(db, organization_id, employee_id)
+    if not can(roles, P.AVAILABILITY_OWN):
+        raise InvalidRole()
 
     own = get_employee_for_user(db, organization_id, user_id)
     if own.id != employee_id:

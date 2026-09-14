@@ -63,9 +63,7 @@ def _fire_together(calls: list) -> list:  # type: ignore[type-arg]
 
 
 def _booking_at(db: Session, organization: Organization, setup: dict, start: dt.datetime):  # type: ignore[no-untyped-def]
-    booking = make_booking(
-        db, organization, setup["customer"], setup["vehicle"], setup["service"], start=start
-    )
+    booking = make_booking(db, organization, setup["customer"], setup["service"], start=start)
     booking.requested_end = start + dt.timedelta(hours=2)
     db.commit()
     return booking
@@ -83,7 +81,7 @@ def test_simultaneous_overlapping_assignments_leave_exactly_one_winner(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Two bookings, one employee, overlapping windows, fired at the same instant."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -107,7 +105,7 @@ def test_simultaneous_overlapping_assignments_leave_exactly_one_winner(
     assert counts[409] == 1, f"expected one clean rejection, got {counts}"
 
     losers = [r for r in responses if r.status_code == 409]
-    assert losers[0].json()["error"]["code"] == "SCHEDULE_CONFLICT"
+    assert losers[0].json()["error"]["code"] == "BOOKING_CONFLICT"
 
     # And the database holds one job, not two.
     assert db.query(Job).filter_by(employee_id=setup["employee"].id).count() == 1
@@ -117,7 +115,7 @@ def test_simultaneous_overlapping_assignments_leave_exactly_one_winner(
 def test_five_simultaneous_overlapping_attempts_still_leave_one(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
     payload = {"employee_id": str(setup["employee"].id)}
@@ -142,7 +140,7 @@ def test_five_simultaneous_overlapping_attempts_still_leave_one(
     assert counts[200] == 1, f"expected exactly one winner, got {counts}"
     assert counts[409] == 4, f"expected four clean rejections, got {counts}"
     assert all(
-        r.json()["error"]["code"] == "SCHEDULE_CONFLICT" for r in responses if r.status_code == 409
+        r.json()["error"]["code"] == "BOOKING_CONFLICT" for r in responses if r.status_code == 409
     )
     assert db.query(Job).filter_by(employee_id=setup["employee"].id).count() == 1
 
@@ -152,7 +150,7 @@ def test_simultaneous_non_overlapping_assignments_all_succeed(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Serialising must not turn independent work into false conflicts."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
     payload = {"employee_id": str(setup["employee"].id)}
@@ -181,7 +179,7 @@ def test_two_employees_are_never_serialised_against_each_other(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """The same window for different people is not a conflict."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     colleague = make_employee(
         db, organization, email="colleague@example.com", services=[setup["service"]]
@@ -213,7 +211,7 @@ def test_confirming_the_same_booking_twice_at_once_creates_one_job(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """The phase 3 guarantee, re-checked under real contention."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
     booking = _booking_at(db, organization, setup, at(0))
@@ -243,7 +241,7 @@ def test_simultaneous_reassignment_onto_one_employee_conflicts_cleanly(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Two overlapping jobs both moved onto the same free technician at once."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     target = make_employee(
         db, organization, email="target@example.com", services=[setup["service"]]
@@ -291,7 +289,7 @@ def test_simultaneous_reschedules_into_one_slot_conflict_cleanly(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Two of an employee's jobs moved onto the same window at the same moment."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -339,7 +337,7 @@ def test_the_winner_is_a_real_assignment_not_a_partial_write(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """Whichever request wins must leave a fully consistent booking and job."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
     payload = {"employee_id": str(setup["employee"].id)}
@@ -361,7 +359,7 @@ def test_the_winner_is_a_real_assignment_not_a_partial_write(
 
     db.expire_all()
     assert winner["status"] == "CONFIRMED"
-    assert winner["job"]["status"] == "ASSIGNED"
+    assert winner["job"]["status"] == "SCHEDULED"
 
     # The loser stayed pending, with no orphan job.
     loser_id = second.id if winner["id"] == str(first.id) else first.id
@@ -370,5 +368,8 @@ def test_the_winner_is_a_real_assignment_not_a_partial_write(
     loser = db.get(Booking, loser_id)
     assert loser is not None
     assert loser.status is BookingStatus.PENDING
-    assert db.query(Job).filter_by(booking_id=loser_id).count() == 0
-    assert db.query(Job).filter_by(status=JobStatus.ASSIGNED).count() == 1
+    assert (
+        db.query(Job).filter_by(booking_id=loser_id).filter(Job.employee_id.is_not(None)).count()
+        == 0
+    )
+    assert db.query(Job).filter_by(status=JobStatus.SCHEDULED).count() == 1

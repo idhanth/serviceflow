@@ -14,7 +14,11 @@ from decimal import Decimal
 import pytest
 
 # Settings are cached at import time, so the test environment must be set first.
-_DEV_URL = os.environ.get("DATABASE_URL", "postgresql+psycopg://localhost:5433/serviceflow")
+# The application role is deliberately not a superuser: superusers bypass row level
+# security, and tests/test_row_level_security.py refuses to run as one.
+_DEV_URL = os.environ.get(
+    "DATABASE_URL", "postgresql+psycopg://serviceflow:serviceflow@127.0.0.1:5433/serviceflow"
+)
 TEST_DATABASE_URL = _DEV_URL.rsplit("/", 1)[0] + "/serviceflow_test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["ENVIRONMENT"] = "test"
@@ -77,9 +81,10 @@ from serviceflow.db.models.notification import Notification  # noqa: E402
 from serviceflow.db.models.organization import Organization  # noqa: E402
 from serviceflow.db.models.service import Service  # noqa: E402
 from serviceflow.db.models.user import User  # noqa: E402
-from serviceflow.db.models.vehicle import Vehicle  # noqa: E402
 from serviceflow.db.session import get_session_factory, reset_engine  # noqa: E402
+from serviceflow.db.tenancy import allow_cross_tenant  # noqa: E402
 from serviceflow.main import create_app  # noqa: E402
+from serviceflow.services.employees import set_qualifications  # noqa: E402
 from serviceflow.services.storage import (  # noqa: E402
     get_object_storage,
     reset_object_storage,
@@ -135,7 +140,14 @@ def _bucket() -> Iterator[None]:
 
 @pytest.fixture()
 def db() -> Iterator[Session]:
+    """The fixture session builds data across tenants, so it bypasses RLS.
+
+    Requests made through `client` use the application's own sessions, which are
+    bound to the caller's tenant - so every API assertion runs with row level
+    security in force.
+    """
     session = get_session_factory()()
+    allow_cross_tenant(session)
     try:
         yield session
     finally:
@@ -162,7 +174,7 @@ def client() -> Iterator[TestClient]:
         yield test_client
 
 
-def make_organization(db: Session, *, name: str = "Gleam Auto") -> Organization:
+def make_organization(db: Session, *, name: str = "Northside Home Services") -> Organization:
     slug = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
     org = Organization(name=name, slug=slug, email=f"{slug}@example.com", timezone="UTC")
     db.add(org)
@@ -178,6 +190,7 @@ def make_user(
     email: str | None = None,
     first_name: str | None = None,
     last_name: str = "Tester",
+    platform_admin: bool = False,
 ) -> User:
     email = email or f"{role.value.lower()}-{uuid.uuid4().hex[:8]}@example.com"
     user = User(
@@ -186,6 +199,7 @@ def make_user(
         first_name=first_name or role.value.title(),
         last_name=last_name,
         password_hash=hash_password(TEST_PASSWORD),
+        is_platform_admin=platform_admin,
     )
     db.add(user)
     db.flush()
@@ -208,7 +222,8 @@ def organization(db: Session) -> Organization:
 
 @pytest.fixture()
 def admin(db: Session, organization: Organization) -> User:
-    return make_user(db, organization, role=Role.ADMIN)
+    """The business owner: the role with full control of its tenant."""
+    return make_user(db, organization, role=Role.OWNER)
 
 
 def auth_headers(
@@ -231,8 +246,8 @@ def make_service(
     db: Session,
     organization: Organization,
     *,
-    name: str = "Full Detail",
-    price: str = "310.00",
+    name: str = "Water Heater Installation",
+    price: str = "1450.00",
     duration_minutes: int = 240,
     active: bool = True,
 ) -> Service:
@@ -257,6 +272,7 @@ def make_customer(
     first_name: str = "Casey",
     last_name: str = "Customer",
     notes: str | None = None,
+    address: str | None = "412 Maple Ave, Evanston, IL 60201",
 ) -> Customer:
     user = make_user(
         db,
@@ -266,7 +282,9 @@ def make_customer(
         first_name=first_name,
         last_name=last_name,
     )
-    customer = Customer(organization_id=organization.id, user_id=user.id, notes=notes)
+    customer = Customer(
+        organization_id=organization.id, user_id=user.id, notes=notes, address=address
+    )
     db.add(customer)
     db.commit()
     return customer
@@ -277,7 +295,7 @@ def make_employee(
     organization: Organization,
     *,
     email: str | None = None,
-    job_title: str = "Detailer",
+    job_title: str = "HVAC Technician",
     active: bool = True,
     services: list[Service] | None = None,
     always_available: bool = True,
@@ -290,13 +308,14 @@ def make_employee(
     schedule they mean to exercise.
     """
     user = make_user(
-        db, organization, role=Role.EMPLOYEE, email=email, first_name="Erin", last_name="Employee"
+        db, organization, role=Role.TECHNICIAN, email=email, first_name="Erin", last_name="Employee"
     )
     employee = Employee(
         organization_id=organization.id, user_id=user.id, job_title=job_title, active=active
     )
-    employee.services = services or []
     db.add(employee)
+    db.flush()
+    set_qualifications(employee, services or [])
     db.commit()
 
     if always_available:
@@ -350,30 +369,6 @@ def set_override(
     return override
 
 
-def make_vehicle(
-    db: Session,
-    organization: Organization,
-    customer: Customer,
-    *,
-    year: int = 2022,
-    make: str = "BMW",
-    model: str = "M3",
-    license_plate: str | None = None,
-) -> Vehicle:
-    vehicle = Vehicle(
-        organization_id=organization.id,
-        customer_id=customer.id,
-        year=year,
-        make=make,
-        model=model,
-        color="Alpine White",
-        license_plate=license_plate,
-    )
-    db.add(vehicle)
-    db.commit()
-    return vehicle
-
-
 # ---------------------------------------------------------------- phase 3 factories
 
 
@@ -387,18 +382,41 @@ def make_booking(
     db: Session,
     organization: Organization,
     customer: Customer,
-    vehicle: Vehicle,
     service: Service,
     *,
     start: datetime | None = None,
     status: BookingStatus = BookingStatus.PENDING,
     customer_notes: str | None = None,
+    employee: Employee | None = None,
 ) -> Booking:
+    """A booking with its job, as the service layer would have written them.
+
+    PENDING gets a NEW job; REJECTED and CANCELLED a CANCELLED one; CONFIRMED a
+    SCHEDULED job when `employee` is given (or NEW until `make_job` assigns it).
+    """
     start = start or future_start()
+    if status in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
+        # The database refuses a second open booking for the same customer,
+        # service and start (uq_bookings_no_duplicate_open). Tests that need
+        # several bookings in one slot - to race technicians against each other -
+        # care about the slot, not the customer, so each extra one gets its own.
+        clash = (
+            db.query(Booking)
+            .filter_by(
+                organization_id=organization.id,
+                customer_id=customer.id,
+                service_id=service.id,
+                requested_start=start,
+            )
+            .filter(Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]))
+        )
+        if clash.first() is not None:
+            customer = make_customer(
+                db, organization, email=f"slot-{uuid.uuid4().hex[:10]}@example.com"
+            )
     booking = Booking(
         organization_id=organization.id,
         customer_id=customer.id,
-        vehicle_id=vehicle.id,
         service_id=service.id,
         requested_start=start,
         requested_end=start + timedelta(minutes=service.duration_minutes),
@@ -406,6 +424,25 @@ def make_booking(
         customer_notes=customer_notes,
     )
     db.add(booking)
+    db.flush()
+    if status in (BookingStatus.REJECTED, BookingStatus.CANCELLED):
+        job_status = JobStatus.CANCELLED
+    elif employee is not None:
+        job_status = JobStatus.SCHEDULED
+    else:
+        job_status = JobStatus.NEW
+    db.add(
+        Job(
+            organization_id=organization.id,
+            booking_id=booking.id,
+            employee_id=employee.id
+            if employee is not None and job_status is JobStatus.SCHEDULED
+            else None,
+            scheduled_start=booking.requested_start,
+            scheduled_end=booking.requested_end,
+            status=job_status,
+        )
+    )
     db.commit()
     return booking
 
@@ -416,23 +453,27 @@ def make_job(
     booking: Booking,
     employee: Employee,
     *,
-    status: JobStatus = JobStatus.ASSIGNED,
+    status: JobStatus = JobStatus.SCHEDULED,
 ) -> Job:
-    job = Job(
-        organization_id=organization.id,
-        booking_id=booking.id,
-        employee_id=employee.id,
-        scheduled_start=booking.requested_start,
-        scheduled_end=booking.requested_end,
-        status=status,
-    )
-    db.add(job)
+    """Assign the booking's job to `employee` and set its status.
+
+    Every booking already has its job, so this updates rather than inserts.
+    """
+    job = db.query(Job).filter_by(booking_id=booking.id).one()
+    job.employee_id = employee.id
+    job.status = status
+    if status in (JobStatus.IN_PROGRESS, JobStatus.COMPLETED):
+        job.started_at = booking.requested_start
+    if status is JobStatus.COMPLETED:
+        job.completed_at = booking.requested_end
+    if booking.status is BookingStatus.PENDING and status is not JobStatus.CANCELLED:
+        booking.status = BookingStatus.CONFIRMED
     db.commit()
     return job
 
 
 def booking_setup(db: Session, organization: Organization) -> dict:
-    """A customer with a vehicle, a service, and an employee qualified for it.
+    """A customer, a service, and an employee qualified for it.
 
     Emails are suffixed because users are globally unique: a test that builds two
     organizations calls this twice.
@@ -440,11 +481,10 @@ def booking_setup(db: Session, organization: Organization) -> dict:
     tag = uuid.uuid4().hex[:8]
     # The service name is unique per organization, so it is tagged too - a test
     # that builds two jobs in one org calls this twice.
-    service = make_service(db, organization, name=f"Full Detail {tag}", duration_minutes=150)
+    service = make_service(db, organization, name=f"HVAC Repair {tag}", duration_minutes=150)
     customer = make_customer(
         db, organization, email=f"booker-{tag}@example.com", first_name="Booker"
     )
-    vehicle = make_vehicle(db, organization, customer)
     employee = make_employee(db, organization, email=f"tech-{tag}@example.com", services=[service])
     user = db.get(User, customer.user_id)
     assert user is not None
@@ -454,7 +494,6 @@ def booking_setup(db: Session, organization: Organization) -> dict:
         "service": service,
         "customer": customer,
         "customer_user": user,
-        "vehicle": vehicle,
         "employee": employee,
         "employee_user": employee_user,
     }
@@ -503,7 +542,6 @@ def job_with_parties(db: Session, organization: Organization) -> dict:
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )

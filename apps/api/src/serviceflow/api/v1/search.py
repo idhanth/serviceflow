@@ -1,4 +1,4 @@
-"""Global admin search (PRD 32)."""
+"""Global search for staff with tenant-wide read access."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from serviceflow.api.deps import AdminUser, DbSession, rate_limit_user
+from serviceflow.api.deps import DbSession, Searcher, rate_limit_user
 from serviceflow.schemas.envelope import DataResponse
 from serviceflow.services import global_search
 
@@ -29,7 +29,7 @@ class SearchResult(BaseModel):
     dependencies=[Depends(rate_limit_user("search"))],
 )
 def search(
-    current_user: AdminUser,
+    current_user: Searcher,
     db: DbSession,
     q: Annotated[str, Query(min_length=0, max_length=120)] = "",
 ) -> DataResponse[list[SearchResult]]:

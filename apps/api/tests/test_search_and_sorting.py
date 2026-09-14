@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -22,7 +20,6 @@ from tests.conftest import (
     make_organization,
     make_service,
     make_user,
-    make_vehicle,
 )
 
 # ------------------------------------------------------------------ sort parsing
@@ -61,7 +58,7 @@ def test_a_descending_default_is_honoured() -> None:
 def test_customers_sort_by_name_in_both_directions(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     for first in ("Zoe", "Aaron", "Mia"):
         make_customer(db, organization, email=f"{first.lower()}@example.com", first_name=first)
     headers = auth_headers(client, admin)
@@ -77,7 +74,7 @@ def test_customers_sort_by_name_in_both_directions(
 def test_services_sort_by_price_and_duration(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_service(db, organization, name="Cheap Quick", price="45.00", duration_minutes=30)
     make_service(db, organization, name="Pricey Slow", price="900.00", duration_minutes=480)
     make_service(db, organization, name="Middle", price="200.00", duration_minutes=120)
@@ -93,7 +90,7 @@ def test_services_sort_by_price_and_duration(
 def test_employees_sort_by_job_title_with_active_first(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_employee(db, organization, email="a@example.com", job_title="Zebra Wrangler")
     make_employee(db, organization, email="b@example.com", job_title="Apprentice")
     make_employee(db, organization, email="c@example.com", job_title="Alpha", active=False)
@@ -104,22 +101,10 @@ def test_employees_sort_by_job_title_with_active_first(
     assert [row["job_title"] for row in rows] == ["Apprentice", "Zebra Wrangler", "Alpha"]
 
 
-def test_vehicles_sort_by_year(client: TestClient, db: Session, organization: Organization) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
-    customer = make_customer(db, organization)
-    for year in (2019, 2025, 2022):
-        make_vehicle(db, organization, customer, year=year, make="Make", model=str(year))
-
-    rows = client.get("/api/v1/vehicles?sort=year", headers=auth_headers(client, admin)).json()[
-        "data"
-    ]
-    assert [row["year"] for row in rows] == [2019, 2022, 2025]
-
-
 def test_an_unknown_sort_key_is_ignored_rather_than_erroring(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_customer(db, organization)
     response = client.get(
         "/api/v1/customers?sort=%27%3B+DROP+TABLE+users%3B--", headers=auth_headers(client, admin)
@@ -132,7 +117,7 @@ def test_an_unknown_sort_key_is_ignored_rather_than_erroring(
 
 
 def test_pagination_boundaries(client: TestClient, db: Session, organization: Organization) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     for index in range(7):
         make_customer(db, organization, email=f"c{index}@example.com", first_name=f"C{index}")
     headers = auth_headers(client, admin)
@@ -165,7 +150,7 @@ def test_pagination_boundaries(client: TestClient, db: Session, organization: Or
 def test_invalid_pagination_parameters_are_refused(
     client: TestClient, db: Session, organization: Organization, query: str
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     response = client.get(f"/api/v1/customers?{query}", headers=auth_headers(client, admin))
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
@@ -174,18 +159,17 @@ def test_invalid_pagination_parameters_are_refused(
 # ------------------------------------------------------------------ collection search
 
 
-def test_bookings_search_by_customer_service_and_vehicle(
+def test_bookings_search_by_customer_and_service(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, admin)
 
     assert client.get("/api/v1/bookings?q=Booker", headers=headers).json()["meta"]["total"] == 1
-    assert client.get("/api/v1/bookings?q=BMW", headers=headers).json()["meta"]["total"] == 1
     assert (
-        client.get("/api/v1/bookings?q=Full%20Detail", headers=headers).json()["meta"]["total"] == 1
+        client.get("/api/v1/bookings?q=HVAC%20Repair", headers=headers).json()["meta"]["total"] == 1
     )
     assert (
         client.get("/api/v1/bookings?q=nothingmatches", headers=headers).json()["meta"]["total"]
@@ -212,14 +196,13 @@ def test_jobs_search_is_still_scoped_to_the_employee(
 def test_bookings_sort_by_created_at(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     for offset in (3, 9, 6):
         make_booking(
             db,
             organization,
             setup["customer"],
-            setup["vehicle"],
             setup["service"],
             start=future_start(days=offset),
         )
@@ -237,13 +220,12 @@ def test_bookings_sort_by_created_at(
 def test_global_search_spans_the_record_types(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -255,34 +237,10 @@ def test_global_search_spans_the_record_types(
     assert all(row["href"] for row in rows)
 
 
-def test_global_search_finds_a_vehicle_by_plate(
-    client: TestClient, db: Session, organization: Organization
-) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
-    customer = make_customer(db, organization)
-    make_vehicle(db, organization, customer, license_plate="ZQX404")
-
-    rows = client.get("/api/v1/search?q=ZQX404", headers=auth_headers(client, admin)).json()["data"]
-    assert any(row["kind"] == "vehicle" for row in rows)
-
-
-def test_global_search_ignores_an_archived_vehicle(
-    client: TestClient, db: Session, organization: Organization
-) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
-    customer = make_customer(db, organization)
-    vehicle = make_vehicle(db, organization, customer, license_plate="GONE99")
-    vehicle.archived_at = dt.datetime.now(dt.UTC)
-    db.commit()
-
-    rows = client.get("/api/v1/search?q=GONE99", headers=auth_headers(client, admin)).json()["data"]
-    assert [row for row in rows if row["kind"] == "vehicle"] == []
-
-
 def test_global_search_never_crosses_organizations(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     rival = make_organization(db, name="Rival Detailing")
     make_customer(db, rival, email="rival-target@example.com", first_name="Rivaltarget")
     make_service(db, rival, name="Rivaltarget Wash")
@@ -296,7 +254,7 @@ def test_global_search_never_crosses_organizations(
 def test_a_short_term_returns_nothing(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_customer(db, organization, first_name="Alice")
     headers = auth_headers(client, admin)
 
@@ -307,7 +265,7 @@ def test_a_short_term_returns_nothing(
 def test_search_wildcards_are_escaped(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_customer(db, organization, first_name="Alice")
     rows = client.get("/api/v1/search?q=%25%25", headers=auth_headers(client, admin)).json()["data"]
     assert rows == []

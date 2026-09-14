@@ -36,6 +36,7 @@ from serviceflow.db.models.enums import NotificationChannel, NotificationStatus
 from serviceflow.db.models.notification import Notification
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.user import User
+from serviceflow.db.tenancy import allow_cross_tenant
 from serviceflow.services.email import EmailDeliveryError, get_email_provider
 from serviceflow.services.email.render import render
 
@@ -57,6 +58,7 @@ def claim_for_send(db: Session, notification_id: uuid.UUID) -> Notification | No
     SKIP LOCKED means a second worker holding the same task moves on rather than
     waiting, so the message is never sent twice concurrently.
     """
+    allow_cross_tenant(db)  # the outbox spans every tenant
     return db.scalar(
         select(Notification)
         .where(
@@ -124,6 +126,7 @@ def stranded_pending_ids(db: Session, *, limit: int = SWEEP_BATCH) -> list[uuid.
     Either their dispatch was never queued (broker outage at commit time) or the
     worker holding them was lost.
     """
+    allow_cross_tenant(db)  # the outbox spans every tenant
     cutoff = datetime.now(UTC) - timedelta(seconds=STRANDED_AFTER_SECONDS)
     return list(
         db.scalars(

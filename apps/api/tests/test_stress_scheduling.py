@@ -70,9 +70,7 @@ def booking_at(
     start: dt.datetime,
     hours: float = 2,
 ):  # type: ignore[no-untyped-def]
-    booking = make_booking(
-        db, organization, setup["customer"], setup["vehicle"], setup["service"], start=start
-    )
+    booking = make_booking(db, organization, setup["customer"], setup["service"], start=start)
     booking.requested_end = start + dt.timedelta(hours=hours)
     db.commit()
     return booking
@@ -113,7 +111,7 @@ def test_twelve_simultaneous_overlapping_confirmations_leave_exactly_one(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """One employee, twelve overlapping bookings, all confirmed at the same instant."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -139,7 +137,7 @@ def test_twelve_simultaneous_overlapping_confirmations_leave_exactly_one(
     assert counts[409] == 11, f"expected eleven clean refusals, got {counts}"
     for response in responses:
         if response.status_code == 409:
-            assert response.json()["error"]["code"] == "SCHEDULE_CONFLICT"
+            assert response.json()["error"]["code"] == "BOOKING_CONFLICT"
 
     assert db.query(Job).filter_by(employee_id=setup["employee"].id).count() == 1
     assert no_overlaps(db)
@@ -150,7 +148,7 @@ def test_simultaneous_adjacent_confirmations_all_succeed(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Adjacent is not overlapping, however many arrive at once."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -187,7 +185,7 @@ def test_contention_across_several_employees_fills_every_slot_once(
     Exactly four can be placed - one per employee - and the database must end
     up with four jobs and no overlap, whichever way the race resolves.
     """
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -214,7 +212,7 @@ def test_contention_across_several_employees_fills_every_slot_once(
     counts = statuses(responses)
     assert counts[200] == len(employees), f"one slot per employee, got {counts}"
     assert counts[409] == len(bookings) - len(employees), counts
-    assert db.query(Job).count() == len(employees)
+    assert db.query(Job).filter(Job.employee_id.is_not(None)).count() == len(employees)
     assert no_overlaps(db)
 
 
@@ -226,7 +224,7 @@ def test_simultaneous_reassignments_onto_one_employee_leave_no_overlap(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Several jobs, all reassigned onto the same person at the same instant."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -272,7 +270,7 @@ def test_simultaneous_reschedules_into_one_slot_leave_no_overlap(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Every job tries to move into the same free hour at once."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
 
@@ -318,7 +316,7 @@ def test_a_cancellation_racing_a_confirmation_never_leaves_a_job_on_a_dead_booki
     Either outcome is acceptable; a cancelled booking still holding an active
     job is not.
     """
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, admin)
     booking = booking_at(db, organization, setup, at(0))
@@ -346,5 +344,5 @@ def test_a_cancellation_racing_a_confirmation_never_leaves_a_job_on_a_dead_booki
         )
     else:
         assert stored.status is BookingStatus.CONFIRMED
-        assert job is not None and job.status is JobStatus.ASSIGNED
+        assert job is not None and job.status is JobStatus.SCHEDULED
     assert no_overlaps(db)

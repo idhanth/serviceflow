@@ -166,7 +166,7 @@ def test_a_limited_response_is_well_formed(
 
 
 def test_login_is_limited(client: TestClient, db: Session, organization: Organization) -> None:
-    user = make_user(db, organization, role=Role.ADMIN)
+    user = make_user(db, organization, role=Role.OWNER)
     payload = {"email": user.email, "password": "wrong-password"}
 
     statuses = [
@@ -191,7 +191,6 @@ def test_booking_creation_is_limited_per_user(
                 "/api/v1/bookings",
                 headers=headers,
                 json={
-                    "vehicle_id": str(setup["vehicle"].id),
                     "service_id": str(setup["service"].id),
                     "requested_start": future_start(days=3 + index % 20).isoformat(),
                 },
@@ -214,7 +213,6 @@ def test_one_user_does_not_consume_anothers_quota(
             "/api/v1/bookings",
             headers=first_headers,
             json={
-                "vehicle_id": str(first["vehicle"].id),
                 "service_id": str(first["service"].id),
                 "requested_start": future_start(days=3 + index % 20).isoformat(),
             },
@@ -225,7 +223,6 @@ def test_one_user_does_not_consume_anothers_quota(
         "/api/v1/bookings",
         headers=auth_headers(client, second["customer_user"]),
         json={
-            "vehicle_id": str(second["vehicle"].id),
             "service_id": str(second["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -247,7 +244,6 @@ def test_organizations_have_separate_quotas(
             "/api/v1/bookings",
             headers=our_headers,
             json={
-                "vehicle_id": str(ours["vehicle"].id),
                 "service_id": str(ours["service"].id),
                 "requested_start": future_start(days=3 + index % 20).isoformat(),
             },
@@ -257,7 +253,6 @@ def test_organizations_have_separate_quotas(
         "/api/v1/bookings",
         headers=their_headers,
         json={
-            "vehicle_id": str(theirs["vehicle"].id),
             "service_id": str(theirs["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -284,7 +279,7 @@ def test_photo_presign_is_limited(
 
 
 def test_search_is_limited(client: TestClient, db: Session, organization: Organization) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     allowed = LIMITS["search"].max_requests
 
@@ -300,7 +295,7 @@ def test_unlimited_endpoints_are_not_accidentally_caught(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """Reads that carry no abuse risk keep working past every limiter's ceiling."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     statuses = {
@@ -348,7 +343,7 @@ def test_database_reads_still_work_when_the_limiter_is_down(
 ) -> None:
     """Phase 6's guarantee holds: Redis is not required to read a booking."""
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)  # sign in while Redis is still up
     monkeypatch.setattr(ratelimit, "_client", dead_client())
 

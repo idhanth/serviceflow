@@ -8,7 +8,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
-    ForeignKey,
+    ForeignKeyConstraint,
     Index,
     SmallInteger,
     String,
@@ -43,22 +43,26 @@ class EmployeeAvailability(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base)
     __tablename__ = "employee_availability"
     __table_args__ = (
         UniqueConstraint("employee_id", "day_of_week", "start_time"),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            ondelete="CASCADE",
+        ),
         CheckConstraint("day_of_week BETWEEN 0 AND 6", name="day_of_week_valid"),
         CheckConstraint("end_time > start_time", name="window_ordered"),
         Index("ix_employee_availability_employee_id_day", "employee_id", "day_of_week"),
     )
 
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("employees.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     start_time: Mapped[dt.time] = mapped_column(Time, nullable=False)
     end_time: Mapped[dt.time] = mapped_column(Time, nullable=False)
 
-    employee: Mapped[Employee] = relationship(back_populates="availability")
+    employee: Mapped[Employee] = relationship(
+        back_populates="availability",
+        primaryjoin="EmployeeAvailability.employee_id == Employee.id",
+        foreign_keys="EmployeeAvailability.employee_id",
+    )
 
 
 class AvailabilityOverride(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
@@ -78,6 +82,11 @@ class AvailabilityOverride(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base)
     __tablename__ = "availability_overrides"
     __table_args__ = (
         UniqueConstraint("employee_id", "date"),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            ondelete="CASCADE",
+        ),
         CheckConstraint(
             "(available AND start_time IS NOT NULL AND end_time IS NOT NULL"
             " AND end_time > start_time)"
@@ -87,16 +96,15 @@ class AvailabilityOverride(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base)
         Index("ix_availability_overrides_employee_id_date", "employee_id", "date"),
     )
 
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("employees.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     date: Mapped[dt.date] = mapped_column(Date, nullable=False)
     available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     start_time: Mapped[dt.time | None] = mapped_column(Time)
     end_time: Mapped[dt.time | None] = mapped_column(Time)
     reason: Mapped[str | None] = mapped_column(String(200))
 
-    employee: Mapped[Employee] = relationship(back_populates="availability_overrides")
+    employee: Mapped[Employee] = relationship(
+        back_populates="availability_overrides",
+        primaryjoin="AvailabilityOverride.employee_id == Employee.id",
+        foreign_keys="AvailabilityOverride.employee_id",
+    )

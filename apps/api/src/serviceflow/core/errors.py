@@ -14,7 +14,10 @@ class ErrorCode:
     UNAUTHORIZED = "UNAUTHORIZED"
     FORBIDDEN = "FORBIDDEN"
     NOT_FOUND = "NOT_FOUND"
-    SCHEDULE_CONFLICT = "SCHEDULE_CONFLICT"
+    TENANT_ACCESS_DENIED = "TENANT_ACCESS_DENIED"
+    INVALID_ROLE = "INVALID_ROLE"
+    BOOKING_CONFLICT = "BOOKING_CONFLICT"
+    INVALID_SCHEDULE = "INVALID_SCHEDULE"
     INVALID_STATE_TRANSITION = "INVALID_STATE_TRANSITION"
     IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
     RATE_LIMITED = "RATE_LIMITED"
@@ -65,10 +68,36 @@ class NotFound(AppError):
     message = "We couldn't find what you were looking for."
 
 
+class InvalidRole(AppError):
+    """The caller is signed in and in the right tenant, but their role can't do this."""
+
+    status_code = 403
+    code = ErrorCode.INVALID_ROLE
+    message = "Your role doesn't allow this action."
+
+
+class TenantAccessDenied(AppError):
+    """The caller asked to act inside an organization they don't belong to."""
+
+    status_code = 403
+    code = ErrorCode.TENANT_ACCESS_DENIED
+    message = "That organization isn't available to you."
+
+
 class ScheduleConflict(AppError):
+    """Two bookings would hold the same technician, or the same slot twice."""
+
     status_code = 409
-    code = ErrorCode.SCHEDULE_CONFLICT
-    message = "This employee is already assigned during the selected time."
+    code = ErrorCode.BOOKING_CONFLICT
+    message = "This employee is already booked during the selected time."
+
+
+class InvalidSchedule(AppError):
+    """The technician isn't working then: outside their hours, a day off, time off."""
+
+    status_code = 409
+    code = ErrorCode.INVALID_SCHEDULE
+    message = "That time can't be booked."
 
 
 class InvalidStateTransition(AppError):

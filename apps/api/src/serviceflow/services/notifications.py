@@ -104,14 +104,20 @@ def enqueue(
     return created
 
 
-def _admin_user_ids(db: Session, organization_id: uuid.UUID) -> list[uuid.UUID]:
+# The people who act on a booking request: those who can assign a technician.
+DISPATCH_ROLES = (Role.OWNER, Role.MANAGER, Role.DISPATCHER)
+
+
+def _dispatcher_user_ids(db: Session, organization_id: uuid.UUID) -> list[uuid.UUID]:
     return list(
         db.scalars(
-            select(OrganizationMembership.user_id).where(
+            select(OrganizationMembership.user_id)
+            .where(
                 OrganizationMembership.organization_id == organization_id,
-                OrganizationMembership.role == Role.ADMIN,
+                OrganizationMembership.role.in_(DISPATCH_ROLES),
                 OrganizationMembership.status == MembershipStatus.ACTIVE,
             )
+            .distinct()
         )
     )
 
@@ -124,6 +130,12 @@ def _when(db: Session, organization_id: uuid.UUID, moment: datetime) -> str:
     return local.strftime("%a %-d %b at %-I:%M%p").replace("AM", "am").replace("PM", "pm")
 
 
+def technician_name(job: Job | None) -> str:
+    if job is None or job.employee is None:
+        return "Your technician"
+    return job.employee.user.full_name
+
+
 def _booking_payload(booking: Booking) -> dict[str, Any]:
     return {"booking_id": str(booking.id), "job_id": str(booking.job.id) if booking.job else None}
 
@@ -132,12 +144,12 @@ def _booking_payload(booking: Booking) -> dict[str, Any]:
 
 
 def booking_created(db: Session, booking: Booking) -> None:
-    """Admins have something to review; the customer gets an acknowledgement."""
+    """Dispatchers have something to assign; the customer gets an acknowledgement."""
     when = _when(db, booking.organization_id, booking.requested_start)
     service = booking.service.name
     customer_name = booking.customer.user.full_name
 
-    for admin_id in _admin_user_ids(db, booking.organization_id):
+    for admin_id in _dispatcher_user_ids(db, booking.organization_id):
         enqueue(
             db,
             organization_id=booking.organization_id,
@@ -199,7 +211,7 @@ def booking_rescheduled(db: Session, booking: Booking) -> None:
         payload=_booking_payload(booking),
         channels=WITH_EMAIL,
     )
-    if booking.job is not None:
+    if booking.job is not None and booking.job.employee is not None:
         enqueue(
             db,
             organization_id=booking.organization_id,
@@ -217,7 +229,7 @@ def booking_cancelled(db: Session, booking: Booking, *, cancelled_by_customer: b
     service = booking.service.name
 
     if cancelled_by_customer:
-        for admin_id in _admin_user_ids(db, booking.organization_id):
+        for admin_id in _dispatcher_user_ids(db, booking.organization_id):
             enqueue(
                 db,
                 organization_id=booking.organization_id,
@@ -239,7 +251,7 @@ def booking_cancelled(db: Session, booking: Booking, *, cancelled_by_customer: b
             channels=WITH_EMAIL,
         )
 
-    if booking.job is not None:
+    if booking.job is not None and booking.job.employee is not None:
         enqueue(
             db,
             organization_id=booking.organization_id,
@@ -258,8 +270,8 @@ def job_started(db: Session, job: Job) -> None:
         organization_id=job.organization_id,
         user_id=booking.customer.user_id,
         type=NotificationType.JOB_STARTED,
-        subject=f"Work has started on your {booking.vehicle.display_name}",
-        body=f"{job.employee.user.full_name} has begun the {booking.service.name}.",
+        subject=f"Your {booking.service.name} is under way",
+        body=f"{technician_name(job)} has started work.",
         payload={"booking_id": str(booking.id), "job_id": str(job.id)},
     )
 
@@ -272,10 +284,7 @@ def job_completed(db: Session, job: Job) -> None:
         user_id=booking.customer.user_id,
         type=NotificationType.JOB_COMPLETED,
         subject=f"Your {booking.service.name} is finished",
-        body=(
-            f"{booking.vehicle.display_name} is ready. "
-            "Open the booking to see photos and notes from the visit."
-        ),
+        body="The work is done. Open the booking to see photos and notes from the visit.",
         payload={"booking_id": str(booking.id), "job_id": str(job.id)},
         channels=WITH_EMAIL,
     )
@@ -291,7 +300,7 @@ def appointment_reminder(db: Session, booking: Booking) -> None:
         type=NotificationType.APPOINTMENT_REMINDER,
         channels=WITH_EMAIL,
         subject=f"Reminder: {booking.service.name} on {when}",
-        body=f"We'll see you and your {booking.vehicle.display_name} then.",
+        body=f"{technician_name(booking.job)} will see you then.",
         payload=_booking_payload(booking),
     )
 

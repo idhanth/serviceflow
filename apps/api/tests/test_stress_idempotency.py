@@ -44,7 +44,6 @@ def fire_together(calls: list[Any], timeout: float = 45.0) -> list[Any]:
 
 def body(setup: dict[str, Any], days: int = 5) -> dict[str, str]:
     return {
-        "vehicle_id": str(setup["vehicle"].id),
         "service_id": str(setup["service"].id),
         "requested_start": future_start(days=days).isoformat(),
     }

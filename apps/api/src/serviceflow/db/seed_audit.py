@@ -1,10 +1,10 @@
-"""Backfills an audit trail for the seeded history (PRD 35, 49).
+"""Backfills an audit trail for the seeded history.
 
 The rest of the seed writes rows directly rather than calling the services, so
 nothing has recorded who did what - and an Activity page that is empty on a
 freshly seeded demo tells the wrong story about the feature. This reconstructs
-the trail the same actions would have left: the customer requested it, an admin
-confirmed and assigned it, the assigned employee started and finished it.
+the trail the same actions would have left: the booking was requested, a
+dispatcher confirmed and assigned it, the technician started and finished it.
 
 Timestamps are derived from each booking, so the feed reads as history rather
 than as 700 rows created the moment the seed ran.
@@ -29,16 +29,21 @@ from serviceflow.db.models.user import User
 
 
 def _admin_user_id(db: Session, org: Organization) -> uuid.UUID | None:
-    return db.scalar(
-        select(User.id)
-        .join(OrganizationMembership, OrganizationMembership.user_id == User.id)
-        .where(
-            OrganizationMembership.organization_id == org.id,
-            OrganizationMembership.role == Role.ADMIN,
+    """The dispatcher if the business has one, otherwise an owner."""
+    for role in (Role.DISPATCHER, Role.OWNER):
+        found = db.scalar(
+            select(User.id)
+            .join(OrganizationMembership, OrganizationMembership.user_id == User.id)
+            .where(
+                OrganizationMembership.organization_id == org.id,
+                OrganizationMembership.role == role,
+            )
+            .order_by(User.created_at, User.email)
+            .limit(1)
         )
-        .order_by(User.created_at)
-        .limit(1)
-    )
+        if found is not None:
+            return found
+    return None
 
 
 def seed_audit_trail(db: Session, org: Organization, rng: random.Random) -> int:
@@ -61,7 +66,6 @@ def seed_audit_trail(db: Session, org: Organization, rng: random.Random) -> int:
             .options(
                 joinedload(Booking.customer),
                 joinedload(Booking.service),
-                joinedload(Booking.vehicle),
                 joinedload(Booking.job).joinedload(Job.employee),
             )
         ).unique()
@@ -92,7 +96,6 @@ def seed_audit_trail(db: Session, org: Organization, rng: random.Random) -> int:
 
     for booking in bookings:
         customer_user_id = booking.customer.user_id
-        vehicle = f"{booking.vehicle.year} {booking.vehicle.make} {booking.vehicle.model}"
         # Requests come in a day or two before the appointment.
         requested_at = min(
             booking.requested_start - timedelta(days=rng.randint(1, 4), hours=rng.randint(0, 9)),
@@ -100,13 +103,13 @@ def seed_audit_trail(db: Session, org: Organization, rng: random.Random) -> int:
         )
         add(
             AuditAction.BOOKING_CREATED,
-            actor_id=customer_user_id,
+            # Customers request most work online; the rest was booked by phone.
+            actor_id=customer_user_id if rng.random() < 0.55 else admin_id,
             resource_type="booking",
             resource_id=booking.id,
             at=requested_at,
             metadata={
                 "service": booking.service.name,
-                "vehicle": vehicle,
                 "requested_start": booking.requested_start.isoformat(),
             },
         )
@@ -127,7 +130,7 @@ def seed_audit_trail(db: Session, org: Organization, rng: random.Random) -> int:
             continue
 
         job = booking.job
-        if job is not None:
+        if job is not None and job.employee is not None:
             add(
                 AuditAction.BOOKING_CONFIRMED,
                 actor_id=admin_id,
@@ -167,7 +170,7 @@ def seed_audit_trail(db: Session, org: Organization, rng: random.Random) -> int:
                     resource_type="job",
                     resource_id=job.id,
                     at=job.completed_at,
-                    metadata={"service": booking.service.name, "vehicle": vehicle},
+                    metadata={"service": booking.service.name},
                 )
 
         if booking.status is BookingStatus.CANCELLED:

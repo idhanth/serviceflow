@@ -1,4 +1,4 @@
-"""Global admin search across the record types an admin looks things up by (PRD 32).
+"""Global search across the record types staff look things up by.
 
 Plain PostgreSQL `ILIKE` over a handful of indexed columns, capped per group.
 At this scale - hundreds of customers, thousands of bookings - that is both fast
@@ -24,7 +24,6 @@ from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
-from serviceflow.db.models.vehicle import Vehicle
 from serviceflow.services.search import like_pattern
 
 MIN_QUERY_LENGTH = 2
@@ -33,7 +32,7 @@ PER_GROUP_LIMIT = 5
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
-    kind: str  # customer | vehicle | booking | job | employee | service
+    kind: str  # customer | booking | job | employee | service
     id: uuid.UUID
     title: str
     subtitle: str
@@ -57,6 +56,7 @@ def search(db: Session, organization_id: uuid.UUID, term: str) -> list[SearchHit
         .join(User)
         .where(
             Customer.organization_id == organization_id,
+            Customer.archived_at.is_(None),
             or_(
                 User.first_name.ilike(pattern),
                 User.last_name.ilike(pattern),
@@ -73,36 +73,10 @@ def search(db: Session, organization_id: uuid.UUID, term: str) -> list[SearchHit
             kind="customer",
             id=row.id,
             title=row.user.full_name,
-            subtitle=row.user.email,
-            href="/customers",
+            subtitle=row.address or row.user.email,
+            href=f"/customers/{row.id}",
         )
         for row in customers
-    ]
-
-    vehicles = db.scalars(
-        select(Vehicle)
-        .where(
-            Vehicle.organization_id == organization_id,
-            Vehicle.archived_at.is_(None),
-            or_(
-                Vehicle.make.ilike(pattern),
-                Vehicle.model.ilike(pattern),
-                Vehicle.color.ilike(pattern),
-                Vehicle.license_plate.ilike(pattern),
-            ),
-        )
-        .order_by(Vehicle.created_at.desc())
-        .limit(PER_GROUP_LIMIT)
-    ).unique()
-    hits += [
-        SearchHit(
-            kind="vehicle",
-            id=row.id,
-            title=row.display_name,
-            subtitle=row.license_plate or row.color or "No plate on file",
-            href="/vehicles",
-        )
-        for row in vehicles
     ]
 
     employees = db.scalars(
@@ -157,15 +131,12 @@ def search(db: Session, organization_id: uuid.UUID, term: str) -> list[SearchHit
         select(Booking)
         .join(Customer, Customer.id == Booking.customer_id)
         .join(User, User.id == Customer.user_id)
-        .join(Vehicle, Vehicle.id == Booking.vehicle_id)
         .join(Service, Service.id == Booking.service_id)
         .where(
             Booking.organization_id == organization_id,
             or_(
                 _full_name().ilike(pattern),
-                Vehicle.make.ilike(pattern),
-                Vehicle.model.ilike(pattern),
-                Vehicle.license_plate.ilike(pattern),
+                Customer.address.ilike(pattern),
                 Service.name.ilike(pattern),
             ),
         )
@@ -180,7 +151,7 @@ def search(db: Session, organization_id: uuid.UUID, term: str) -> list[SearchHit
             subtitle=(
                 f"{row.requested_start.astimezone(UTC):%d %b %Y} · {row.status.value.lower()}"
             ),
-            href="/bookings",
+            href=f"/bookings/{row.id}",
         )
         for row in bookings
     ]
@@ -204,7 +175,8 @@ def search(db: Session, organization_id: uuid.UUID, term: str) -> list[SearchHit
             id=row.id,
             title=f"{row.booking.service.name} — {row.booking.customer.user.full_name}",
             subtitle=(
-                f"{row.scheduled_start.astimezone(UTC):%d %b %Y} · {row.employee.user.full_name}"
+                f"{row.scheduled_start.astimezone(UTC):%d %b %Y} · "
+                f"{row.employee.user.full_name if row.employee else 'Unassigned'}"
             ),
             href=f"/jobs/{row.id}",
         )

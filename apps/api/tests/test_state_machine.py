@@ -64,8 +64,8 @@ def test_refused_booking_transitions(start: BookingStatus, target: BookingStatus
 @pytest.mark.parametrize(
     ("start", "target"),
     [
-        (JobStatus.ASSIGNED, JobStatus.IN_PROGRESS),
-        (JobStatus.ASSIGNED, JobStatus.CANCELLED),
+        (JobStatus.SCHEDULED, JobStatus.IN_PROGRESS),
+        (JobStatus.SCHEDULED, JobStatus.CANCELLED),
         (JobStatus.IN_PROGRESS, JobStatus.COMPLETED),
     ],
 )
@@ -78,13 +78,13 @@ def test_allowed_job_transitions(start: JobStatus, target: JobStatus) -> None:
 @pytest.mark.parametrize(
     ("start", "target"),
     [
-        (JobStatus.ASSIGNED, JobStatus.COMPLETED),
-        (JobStatus.IN_PROGRESS, JobStatus.ASSIGNED),
+        (JobStatus.SCHEDULED, JobStatus.COMPLETED),
+        (JobStatus.IN_PROGRESS, JobStatus.SCHEDULED),
         (JobStatus.IN_PROGRESS, JobStatus.CANCELLED),
         (JobStatus.COMPLETED, JobStatus.IN_PROGRESS),
-        (JobStatus.COMPLETED, JobStatus.ASSIGNED),
+        (JobStatus.COMPLETED, JobStatus.SCHEDULED),
         (JobStatus.COMPLETED, JobStatus.CANCELLED),
-        (JobStatus.CANCELLED, JobStatus.ASSIGNED),
+        (JobStatus.CANCELLED, JobStatus.SCHEDULED),
         (JobStatus.CANCELLED, JobStatus.IN_PROGRESS),
     ],
 )
@@ -118,7 +118,7 @@ def test_the_error_names_both_states() -> None:
 
 
 def test_read_only_check_does_not_mutate() -> None:
-    job = _job(JobStatus.ASSIGNED)
+    job = _job(JobStatus.SCHEDULED)
     assert can_transition_job(job, JobStatus.IN_PROGRESS) is True
     assert can_transition_job(job, JobStatus.COMPLETED) is False
-    assert job.status is JobStatus.ASSIGNED
+    assert job.status is JobStatus.SCHEDULED

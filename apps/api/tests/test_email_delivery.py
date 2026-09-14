@@ -41,13 +41,12 @@ from tests.conftest import (
 
 
 def confirm_a_booking(client: TestClient, db: Session, organization: Organization) -> dict:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -83,13 +82,12 @@ def test_a_rolled_back_confirmation_writes_no_email(
         def check_assignment(self, session, request: AssignmentRequest) -> None:  # type: ignore[no-untyped-def]
             raise DependencyUnavailable("Scheduling is unavailable.")
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -173,7 +171,7 @@ def test_the_email_body_carries_the_business_details_and_no_internals(
     assert tasks.dispatch_email(str(row.id)) == "sent"
 
     body = mailpit_body(mailpit_messages()[0]["ID"])
-    assert parties["booking"].vehicle.display_name in body
+    assert "photos and notes" in body
     assert organization.name in body
     assert "SECRET-INTERNAL" not in body
     assert "SECRET-COMPLETION" not in body
@@ -342,13 +340,12 @@ def test_admin_operational_alerts_stay_in_app_only(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """A new booking request notifies admins in-app; it does not email them."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     client.post(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },

@@ -24,7 +24,6 @@ def _confirmed_job(db: Session, organization: Organization, setup: dict) -> Job:
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -58,7 +57,7 @@ def test_employee_walks_a_job_through_its_lifecycle(
 @pytest.mark.parametrize(
     ("initial", "action"),
     [
-        (JobStatus.ASSIGNED, "complete"),
+        (JobStatus.SCHEDULED, "complete"),
         (JobStatus.IN_PROGRESS, "start"),
         (JobStatus.COMPLETED, "start"),
         (JobStatus.COMPLETED, "complete"),
@@ -78,7 +77,6 @@ def test_invalid_transitions_return_409(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -118,7 +116,7 @@ def test_a_completed_job_cannot_go_back_to_in_progress(
 def test_an_in_progress_job_cannot_be_cancelled(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     job = _confirmed_job(db, organization, setup)
     client.post(
@@ -142,7 +140,6 @@ def test_employee_sees_only_their_own_jobs(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -169,7 +166,6 @@ def test_an_employee_filter_cannot_widen_an_employees_view(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -186,7 +182,7 @@ def test_an_employee_filter_cannot_widen_an_employees_view(
 def test_admin_sees_every_job_and_can_filter_by_employee(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     colleague = make_employee(
         db, organization, email="colleague@example.com", services=[setup["service"]]
@@ -196,7 +192,6 @@ def test_admin_sees_every_job_and_can_filter_by_employee(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -241,7 +236,7 @@ def test_employees_cannot_cancel_or_reassign(
 def test_admin_reassigns_an_unstarted_job(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     colleague = make_employee(
         db, organization, email="colleague@example.com", services=[setup["service"]]
@@ -262,7 +257,7 @@ def test_reassignment_respects_qualification_and_job_state(
 ) -> None:
     from tests.conftest import make_service
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     other = make_service(db, organization, name="Express Wash", duration_minutes=45)
     unqualified = make_employee(db, organization, email="wrong@example.com", services=[other])
@@ -295,7 +290,6 @@ def test_the_customer_sees_job_progress_on_their_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -303,7 +297,7 @@ def test_the_customer_sees_job_progress_on_their_booking(
     customer_headers = auth_headers(client, setup["customer_user"])
 
     before = client.get(f"/api/v1/bookings/{booking.id}", headers=customer_headers).json()
-    assert before["data"]["job"]["status"] == "ASSIGNED"
+    assert before["data"]["job"]["status"] == "SCHEDULED"
     assert before["data"]["job"]["employee_name"] == setup["employee"].user.full_name
 
     client.post(

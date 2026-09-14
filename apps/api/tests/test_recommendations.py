@@ -205,7 +205,6 @@ def test_a_conflicting_job_is_reported_with_the_clashing_time(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=SLOT,
         status=BookingStatus.CONFIRMED,
@@ -237,7 +236,6 @@ def test_the_least_loaded_technician_is_recommended_first(
             db,
             organization,
             setup["customer"],
-            setup["vehicle"],
             setup["service"],
             start=SLOT + dt.timedelta(hours=offset),
             status=BookingStatus.CONFIRMED,
@@ -280,7 +278,7 @@ def test_ranking_is_reproducible(db: Session, organization: Organization) -> Non
 def test_the_api_exposes_the_ranking_and_its_reasons(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     off_today = make_employee(
         db,
@@ -291,9 +289,7 @@ def test_the_api_exposes_the_ranking_and_its_reasons(
     )
     set_weekly_availability(db, off_today, days=[5, 6], start="09:00", end="17:00")
 
-    booking = make_booking(
-        db, organization, setup["customer"], setup["vehicle"], setup["service"], start=SLOT
-    )
+    booking = make_booking(db, organization, setup["customer"], setup["service"], start=SLOT)
     response = client.get(
         f"/api/v1/bookings/{booking.id}/assignable-employees",
         headers=auth_headers(client, admin),

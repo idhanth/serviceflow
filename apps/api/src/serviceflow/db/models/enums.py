@@ -6,9 +6,19 @@ import enum
 
 
 class Role(enum.StrEnum):
+    """A person's role inside one tenant. Permissions live in auth/permissions.py.
+
+    The seventh role, Platform Admin, is deliberately not a member of this enum:
+    it is not held *inside* a tenant, so it is a flag on the user
+    (`users.is_platform_admin`) rather than a membership row.
+    """
+
+    OWNER = "OWNER"
+    MANAGER = "MANAGER"
+    DISPATCHER = "DISPATCHER"
+    TECHNICIAN = "TECHNICIAN"
     CUSTOMER = "CUSTOMER"
-    EMPLOYEE = "EMPLOYEE"
-    ADMIN = "ADMIN"
+    ANALYST = "ANALYST"
 
 
 class MembershipStatus(enum.StrEnum):
@@ -25,7 +35,8 @@ class BookingStatus(enum.StrEnum):
 
 
 class JobStatus(enum.StrEnum):
-    ASSIGNED = "ASSIGNED"
+    NEW = "NEW"  # created with its booking, nobody assigned yet
+    SCHEDULED = "SCHEDULED"  # a technician holds the time
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
@@ -91,6 +102,7 @@ class AuditAction(enum.StrEnum):
 
     CUSTOMER_CREATED = "CUSTOMER_CREATED"
     CUSTOMER_UPDATED = "CUSTOMER_UPDATED"
+    CUSTOMER_ARCHIVED = "CUSTOMER_ARCHIVED"
     EMPLOYEE_CREATED = "EMPLOYEE_CREATED"
     EMPLOYEE_UPDATED = "EMPLOYEE_UPDATED"
     EMPLOYEE_DEACTIVATED = "EMPLOYEE_DEACTIVATED"
@@ -100,7 +112,12 @@ class AuditAction(enum.StrEnum):
     SERVICE_UPDATED = "SERVICE_UPDATED"
     SERVICE_RETIRED = "SERVICE_RETIRED"
 
-    VEHICLE_ARCHIVED = "VEHICLE_ARCHIVED"
+    USER_INVITED = "USER_INVITED"
+    USER_ROLE_CHANGED = "USER_ROLE_CHANGED"
+    MEMBER_SUSPENDED = "MEMBER_SUSPENDED"
+    MEMBER_REACTIVATED = "MEMBER_REACTIVATED"
+    ORGANIZATION_UPDATED = "ORGANIZATION_UPDATED"
+    TENANT_CREATED = "TENANT_CREATED"
     AVAILABILITY_UPDATED = "AVAILABILITY_UPDATED"
     AVAILABILITY_OVERRIDE_SET = "AVAILABILITY_OVERRIDE_SET"
     AVAILABILITY_OVERRIDE_REMOVED = "AVAILABILITY_OVERRIDE_REMOVED"

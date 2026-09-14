@@ -14,7 +14,9 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from serviceflow.core.errors import Forbidden, NotFound, ValidationFailed
+from serviceflow.auth.permissions import Permission as P
+from serviceflow.auth.permissions import can
+from serviceflow.core.errors import Forbidden, InvalidRole, NotFound, ValidationFailed
 from serviceflow.db.models.enums import AuditAction, NoteVisibility, Role
 from serviceflow.db.models.job_note import JobNote
 from serviceflow.services import audit
@@ -90,7 +92,7 @@ def create_note(
     """Only staff write notes; customers read the ones marked for them."""
     _, audience = resolve_job_for_viewer(db, organization_id, job_id, roles=roles, user_id=user_id)
     if audience is not JobAudience.STAFF:
-        raise Forbidden("Only the team can add notes to a job.")
+        raise InvalidRole("Only the team can add notes to a job.")
 
     body = content.strip()
     if not body:
@@ -137,11 +139,13 @@ def delete_note(
     roles: frozenset[Role],
     user_id: uuid.UUID,
 ) -> None:
-    """An author may remove their own note; an admin may remove any in the org."""
+    """An author may remove their own note; a dispatcher may remove any in the org."""
     note, audience = get_note(db, organization_id, note_id, roles=roles, user_id=user_id)
-    if audience is not JobAudience.STAFF:
+    if audience is JobAudience.CUSTOMER:
         raise NotFound("We couldn't find that note.")
-    if Role.ADMIN not in roles and note.author_id != user_id:
+    if audience is JobAudience.READER:
+        raise InvalidRole("Read-only access can't remove notes.")
+    if not can(roles, P.JOBS_DISPATCH) and note.author_id != user_id:
         raise Forbidden("You can only remove notes you wrote.")
 
     audit.record(

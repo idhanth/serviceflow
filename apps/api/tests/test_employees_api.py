@@ -20,7 +20,7 @@ from tests.conftest import (
 def test_admin_adds_an_employee_with_qualifications(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     wash = make_service(db, organization, name="Express Wash")
     detail = make_service(db, organization, name="Full Detail")
 
@@ -44,7 +44,7 @@ def test_admin_adds_an_employee_with_qualifications(
 def test_a_service_from_another_organization_cannot_be_assigned(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     foreign_org = make_organization(db, name="Rival Detailing")
     foreign_service = make_service(db, foreign_org, name="Foreign Service")
 
@@ -110,7 +110,7 @@ def test_deactivating_an_employee_revokes_their_access(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """PRD 53: a deactivated employee must lose access, not merely be hidden."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     employee = make_employee(db, organization)
     user = db.get(type(employee.user), employee.user_id)
     assert user is not None
@@ -127,7 +127,7 @@ def test_deactivating_an_employee_revokes_their_access(
     assert response.json()["data"]["active"] is False
 
     membership = (
-        db.query(OrganizationMembership).filter_by(user_id=user.id, role=Role.EMPLOYEE).one()
+        db.query(OrganizationMembership).filter_by(user_id=user.id, role=Role.TECHNICIAN).one()
     )
     db.refresh(membership)
     assert membership.status is MembershipStatus.SUSPENDED
@@ -137,13 +137,13 @@ def test_deactivating_an_employee_revokes_their_access(
 def test_reactivating_restores_access(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     employee = make_employee(db, organization, active=False)
     user = db.get(type(employee.user), employee.user_id)
     assert user is not None
 
     membership = (
-        db.query(OrganizationMembership).filter_by(user_id=user.id, role=Role.EMPLOYEE).one()
+        db.query(OrganizationMembership).filter_by(user_id=user.id, role=Role.TECHNICIAN).one()
     )
     membership.status = MembershipStatus.SUSPENDED
     db.commit()
@@ -160,7 +160,7 @@ def test_reactivating_restores_access(
 def test_filter_employees_by_service_and_active_state(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     coating = make_service(db, organization, name="Ceramic Coating")
     make_employee(db, organization, email="specialist@example.com", services=[coating])
     make_employee(db, organization, email="generalist@example.com", services=[])

@@ -21,13 +21,12 @@ def hours(offset: float) -> dt.datetime:
 
 
 def _job_at(
-    db: Session, organization: Organization, setup: dict, start, end, status=JobStatus.ASSIGNED
+    db: Session, organization: Organization, setup: dict, start, end, status=JobStatus.SCHEDULED
 ):  # type: ignore[no-untyped-def]
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=start,
         status=BookingStatus.CONFIRMED,
@@ -126,7 +125,6 @@ def test_another_employees_job_is_not_a_conflict(db: Session, organization: Orga
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=hours(0),
         status=BookingStatus.CONFIRMED,

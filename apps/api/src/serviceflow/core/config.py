@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Seconds to wait for a pooled connection before returning 503. Short on
     # purpose; see the comment in db/session.py.
     database_pool_timeout: int = 5
+    # Recycle connections older than this, so a server-side idle timeout or a
+    # failover never hands the pool a connection that is already dead.
+    database_pool_recycle: int = 1800
     database_echo: bool = False
 
     redis_url: RedisDsn = Field(default=...)

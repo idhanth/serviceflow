@@ -1,4 +1,4 @@
-"""Notes, photos and notifications for the demo data (PRD 15, 16).
+"""Notes, photos and notifications for the demo data.
 
 Photos are uploaded to the configured object storage for real - the same client
 the API uses - so the demo shows genuine presigned reads rather than placeholder
@@ -29,6 +29,7 @@ from serviceflow.db.models.job_note import JobNote
 from serviceflow.db.models.job_photo import JobPhoto
 from serviceflow.db.models.notification import Notification
 from serviceflow.db.models.organization import Organization
+from serviceflow.db.seed_data import TenantSpec
 from serviceflow.services.storage import get_object_storage
 
 logger = logging.getLogger(__name__)
@@ -42,24 +43,10 @@ SAMPLE_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
-INTERNAL_NOTES = [
-    "Clay bar needed a second pass on the hood.",
-    "Trim was already faded before we started - flagged to the customer.",
-    "Used the softer pad on the rear quarter; paint reads thin there.",
-    "Interior took longer than quoted, pet hair through the boot.",
-    "Customer arrived late; started 20 minutes behind.",
-]
 
-CUSTOMER_NOTES = [
-    "We removed the water spotting from the hood and roof.",
-    "Leather has been cleaned and conditioned - it may feel slightly tacky for an hour.",
-    "Wheels were decontaminated and sealed; brake dust should rinse off easily now.",
-    "We treated the light swirl marks on the driver's door.",
-    "All done - the paint has a fresh coat of sealant, good for about three months.",
-]
-
-
-def seed_job_content(db: Session, org: Organization, rng: random.Random) -> dict[str, int]:
+def seed_job_content(
+    db: Session, org: Organization, spec: TenantSpec, rng: random.Random
+) -> dict[str, int]:
     if db.scalar(
         select(func.count()).select_from(JobNote).where(JobNote.organization_id == org.id)
     ):
@@ -88,7 +75,7 @@ def seed_job_content(db: Session, org: Organization, rng: random.Random) -> dict
                 organization_id=org.id,
                 job_id=job.id,
                 author_id=author_id,
-                content=rng.choice(CUSTOMER_NOTES),
+                content=rng.choice(spec["visible_notes"]),
                 visibility=NoteVisibility.CUSTOMER_VISIBLE,
             )
         )
@@ -101,7 +88,7 @@ def seed_job_content(db: Session, org: Organization, rng: random.Random) -> dict
                     organization_id=org.id,
                     job_id=job.id,
                     author_id=author_id,
-                    content=rng.choice(INTERNAL_NOTES),
+                    content=rng.choice(spec["internal_notes"]),
                     visibility=NoteVisibility.INTERNAL,
                 )
             )
@@ -171,6 +158,7 @@ def seed_notifications(db: Session, org: Organization) -> int:
             .join(Job.booking)
             .where(Job.organization_id == org.id)
             .where(Job.booking.has(customer_id=demo_customer.id))
+            .where(Job.status.in_([JobStatus.COMPLETED, JobStatus.SCHEDULED]))
             .order_by(Job.scheduled_start.desc())
             .limit(4)
         )
@@ -195,10 +183,10 @@ def seed_notifications(db: Session, org: Organization) -> int:
                     else f"Your {booking.service.name} is confirmed"
                 ),
                 body=(
-                    f"{booking.vehicle.display_name} is ready. "
-                    "Open the booking to see photos and notes from the visit."
+                    "The work is done. Open the booking to see photos and notes from the visit."
                     if finished
-                    else f"{job.employee.user.full_name} will take care of it."
+                    else f"{job.employee.user.full_name if job.employee else 'A technician'}"
+                    " will take care of it."
                 ),
                 # Leave the newest two unread so the badge is visible in the demo.
                 status=NotificationStatus.PENDING if index < 2 else NotificationStatus.READ,

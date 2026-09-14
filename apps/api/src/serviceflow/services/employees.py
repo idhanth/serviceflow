@@ -10,7 +10,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload, selectinl
 
 from serviceflow.core.errors import NotFound, ValidationFailed
 from serviceflow.core.pagination import Page, PageParams, SortSpec
-from serviceflow.db.models.employee import Employee
+from serviceflow.db.models.employee import Employee, EmployeeService
 from serviceflow.db.models.enums import AuditAction, Role
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
@@ -86,22 +86,48 @@ def get_employee(db: Session, organization_id: uuid.UUID, employee_id: uuid.UUID
     employee = db.scalar(
         select(Employee)
         .where(Employee.id == employee_id, Employee.organization_id == organization_id)
-        .options(selectinload(Employee.services))
+        .options(selectinload(Employee.services), selectinload(Employee.service_links))
+        .execution_options(populate_existing=True)
     )
     if employee is None:
         raise NotFound("We couldn't find that employee.")
     return employee
 
 
-def get_employee_for_user(db: Session, organization_id: uuid.UUID, user_id: uuid.UUID) -> Employee:
-    employee = db.scalar(
+def find_employee_for_user(
+    db: Session, organization_id: uuid.UUID, user_id: uuid.UUID
+) -> Employee | None:
+    return db.scalar(
         select(Employee)
         .where(Employee.organization_id == organization_id, Employee.user_id == user_id)
         .options(selectinload(Employee.services))
     )
+
+
+def get_employee_for_user(db: Session, organization_id: uuid.UUID, user_id: uuid.UUID) -> Employee:
+    employee = find_employee_for_user(db, organization_id, user_id)
     if employee is None:
         raise NotFound("You don't have an employee profile in this organization.")
     return employee
+
+
+def set_qualifications(employee: Employee, services: list[Service]) -> None:
+    """Replace an employee's qualifications.
+
+    Written through the link rows, which carry the tenant id so the composite
+    foreign keys can hold the employee and service to one organization.
+    """
+    wanted = {service.id for service in services}
+    employee.service_links = [
+        link for link in employee.service_links if link.service_id in wanted
+    ] + [
+        EmployeeService(
+            organization_id=employee.organization_id,
+            employee_id=employee.id,
+            service_id=service_id,
+        )
+        for service_id in sorted(wanted - {link.service_id for link in employee.service_links})
+    ]
 
 
 def _resolve_services(
@@ -153,14 +179,16 @@ def create_employee(
             details={"fields": {"email": "Already on the team."}},
         )
 
-    ensure_membership(db, organization_id=organization_id, user_id=user.id, role=Role.EMPLOYEE)
+    ensure_membership(db, organization_id=organization_id, user_id=user.id, role=Role.TECHNICIAN)
     employee = Employee(
+        id=uuid.uuid4(),
         organization_id=organization_id,
         user_id=user.id,
         job_title=job_title.strip(),
     )
-    employee.services = _resolve_services(db, organization_id, service_ids or [])
     db.add(employee)
+    db.flush()
+    set_qualifications(employee, _resolve_services(db, organization_id, service_ids or []))
     db.flush()
     audit.record(
         db,
@@ -172,8 +200,7 @@ def create_employee(
         metadata={"name": user.full_name, "job_title": employee.job_title},
     )
     db.commit()
-    db.refresh(employee)
-    return employee
+    return get_employee(db, organization_id, employee.id)
 
 
 def update_employee(
@@ -200,7 +227,7 @@ def update_employee(
     if phone is not None:
         employee.user.phone = phone or None
     if service_ids is not None:
-        employee.services = _resolve_services(db, organization_id, service_ids)
+        set_qualifications(employee, _resolve_services(db, organization_id, service_ids))
     activation_changed = active is not None and active != employee.active
     if activation_changed:
         employee.active = bool(active)
@@ -208,7 +235,7 @@ def update_employee(
             db,
             organization_id=organization_id,
             user_id=employee.user_id,
-            role=Role.EMPLOYEE,
+            role=Role.TECHNICIAN,
             active=bool(active),
         )
 
@@ -226,5 +253,5 @@ def update_employee(
         metadata={"name": employee.user.full_name, "job_title": employee.job_title},
     )
     db.commit()
-    db.refresh(employee)
-    return employee
+    db.expire_all()
+    return get_employee(db, organization_id, employee_id)

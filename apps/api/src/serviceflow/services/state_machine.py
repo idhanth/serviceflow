@@ -1,4 +1,4 @@
-"""The only place booking and job status changes are decided (PRD 12).
+"""The only place booking and job status changes are decided.
 
 Every transition in the application goes through `transition_booking` or
 `transition_job`. Nothing assigns `.status` directly, so an illegal move cannot
@@ -24,7 +24,8 @@ BOOKING_TRANSITIONS: dict[BookingStatus, frozenset[BookingStatus]] = {
 }
 
 JOB_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
-    JobStatus.ASSIGNED: frozenset({JobStatus.IN_PROGRESS, JobStatus.CANCELLED}),
+    JobStatus.NEW: frozenset({JobStatus.SCHEDULED, JobStatus.CANCELLED}),
+    JobStatus.SCHEDULED: frozenset({JobStatus.IN_PROGRESS, JobStatus.CANCELLED}),
     JobStatus.IN_PROGRESS: frozenset({JobStatus.COMPLETED}),
     JobStatus.COMPLETED: frozenset(),
     JobStatus.CANCELLED: frozenset(),
@@ -38,7 +39,8 @@ _BOOKING_LABELS = {
 }
 
 _JOB_LABELS = {
-    JobStatus.ASSIGNED: "assigned",
+    JobStatus.NEW: "new",
+    JobStatus.SCHEDULED: "scheduled",
     JobStatus.IN_PROGRESS: "in progress",
     JobStatus.COMPLETED: "completed",
     JobStatus.CANCELLED: "cancelled",

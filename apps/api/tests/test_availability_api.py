@@ -113,7 +113,7 @@ def test_an_employee_cannot_touch_a_colleagues_schedule(
 def test_admin_manages_anyone_in_the_organization(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     employee = make_employee(db, organization, email="tech@example.com")
 
     response = client.put(
@@ -231,7 +231,7 @@ def test_past_overrides_are_hidden_unless_asked_for(
 def test_availability_is_isolated_across_organizations(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     rival = make_organization(db, name="Rival Detailing")
     rival_employee = make_employee(db, rival, email="rival-tech@example.com")
     headers = auth_headers(client, admin)

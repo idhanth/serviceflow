@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 CHANNEL_PREFIX = "sf:events"
 
 
+# Staff who watch the whole business's queue receive its operational events.
+OPERATIONS_ROLES = ("OWNER", "MANAGER", "DISPATCHER", "ANALYST")
+
+
 def channel_for(organization_id: uuid.UUID | str) -> str:
     """One channel per tenant: a subscriber never even receives foreign traffic."""
     return f"{CHANNEL_PREFIX}:{organization_id}"
@@ -49,7 +53,7 @@ class RealtimeEvent:
     organization_id: str
     # Explicit recipients, by user id. Empty means "role-addressed only".
     recipients: list[str] = field(default_factory=list)
-    # Roles that also receive it, e.g. ADMIN for shop-wide operational events.
+    # Roles that also receive it, e.g. dispatchers for business-wide operational events.
     roles: list[str] = field(default_factory=list)
     occurred_at: str = ""
 
@@ -163,7 +167,7 @@ def booking_updated(
         resource_id=str(booking_id),
         organization_id=str(organization_id),
         recipients=recipients,
-        roles=["ADMIN"],
+        roles=list(OPERATIONS_ROLES),
     )
 
 
@@ -181,5 +185,5 @@ def job_updated(
         resource_id=str(job_id),
         organization_id=str(organization_id),
         recipients=recipients,
-        roles=["ADMIN"],
+        roles=list(OPERATIONS_ROLES),
     )

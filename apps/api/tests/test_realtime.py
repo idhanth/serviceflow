@@ -57,13 +57,13 @@ def test_a_recipient_receives_and_a_stranger_does_not() -> None:
     assert event.visible_to(user_id=target, roles=["CUSTOMER"])
     assert not event.visible_to(user_id=stranger, roles=["CUSTOMER"])
     # A notification is addressed to one person - not even an admin sees it.
-    assert not event.visible_to(user_id=stranger, roles=["ADMIN"])
+    assert not event.visible_to(user_id=stranger, roles=["OWNER"])
 
 
 def test_admins_receive_operational_events_by_role() -> None:
     event = realtime.job_updated(organization_id=uuid.uuid4(), job_id=uuid.uuid4())
-    assert event.visible_to(user_id=uuid.uuid4(), roles=["ADMIN"])
-    assert not event.visible_to(user_id=uuid.uuid4(), roles=["EMPLOYEE"])
+    assert event.visible_to(user_id=uuid.uuid4(), roles=["OWNER"])
+    assert not event.visible_to(user_id=uuid.uuid4(), roles=["TECHNICIAN"])
     assert not event.visible_to(user_id=uuid.uuid4(), roles=["CUSTOMER"])
 
 
@@ -76,8 +76,8 @@ def test_the_assigned_employee_and_the_customer_receive_job_events() -> None:
         employee_user_id=employee,
     )
     assert event.visible_to(user_id=customer, roles=["CUSTOMER"])
-    assert event.visible_to(user_id=employee, roles=["EMPLOYEE"])
-    assert not event.visible_to(user_id=bystander, roles=["EMPLOYEE"])
+    assert event.visible_to(user_id=employee, roles=["TECHNICIAN"])
+    assert not event.visible_to(user_id=bystander, roles=["TECHNICIAN"])
 
 
 def test_each_organization_has_its_own_channel() -> None:
@@ -124,13 +124,12 @@ def test_publishing_reaches_a_real_redis_subscriber() -> None:
 def test_confirming_a_booking_publishes_an_event(
     client: TestClient, db: Session, organization: Organization, captured: list
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -148,7 +147,7 @@ def test_confirming_a_booking_publishes_an_event(
     booking_event = next(e for e in captured if e.type == "booking.updated")
     assert booking_event.resource_id == str(booking.id)
     assert str(setup["customer_user"].id) in booking_event.recipients
-    assert "ADMIN" in booking_event.roles
+    assert "DISPATCHER" in booking_event.roles
 
 
 def test_starting_and_completing_a_job_publish_events(
@@ -182,13 +181,12 @@ def test_a_rolled_back_action_publishes_nothing(
         def check_assignment(self, session, request: AssignmentRequest) -> None:  # type: ignore[no-untyped-def]
             raise DependencyUnavailable("Scheduling is unavailable.")
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -217,13 +215,12 @@ def test_a_publish_failure_does_not_fail_the_request(
 
     monkeypatch.setattr(realtime, "_publisher", explode)
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -247,7 +244,7 @@ def test_the_stream_refuses_an_unauthenticated_client(client: TestClient) -> Non
 def test_the_stream_refuses_a_tampered_token(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     headers["Authorization"] = headers["Authorization"][:-3] + "aaa"
     assert client.get("/api/v1/events", headers=headers).status_code == 401
@@ -258,7 +255,7 @@ def test_the_stream_refuses_a_foreign_organization_header(
 ) -> None:
     from tests.conftest import make_organization
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     rival = make_organization(db, name="Rival Detailing")
     headers = {**auth_headers(client, admin), "X-Organization-Id": str(rival.id)}
     assert client.get("/api/v1/events", headers=headers).status_code == 403
@@ -287,13 +284,13 @@ async def test_the_stream_sends_its_opening_frames_then_stops_on_disconnect(
     from serviceflow.api.v1.events import _stream
     from serviceflow.auth.principal import CurrentUser
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     principal = CurrentUser(
         user_id=admin.id,
         organization_id=organization.id,
         email=admin.email,
         full_name=admin.full_name,
-        roles=frozenset({Role.ADMIN}),
+        roles=frozenset({Role.OWNER}),
     )
 
     frames: list[bytes] = []
@@ -378,8 +375,8 @@ def test_readiness_reports_redis_as_a_dependency(
     assert ready.json()["checks"]["database"] == "ok"
 
     # Liveness is unaffected, and database-backed reads keep working.
-    assert client.get("/health").json() == {"status": "ok"}
-    admin = make_user(db, organization, role=Role.ADMIN)
+    assert client.get("/health").json()["status"] == "ok"
+    admin = make_user(db, organization, role=Role.OWNER)
     assert client.get("/api/v1/customers", headers=auth_headers(client, admin)).status_code == 200
     assert redis_module is not None
 
@@ -397,13 +394,12 @@ def test_a_committed_action_survives_a_dead_broker(
 
     monkeypatch.setattr(tasks.dispatch_email, "delay", dead_delay)
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -427,13 +423,12 @@ def test_a_committed_action_survives_a_dead_broker(
 def test_the_infrastructure_probe_reports_delivery_and_queue_health(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )

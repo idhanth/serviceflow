@@ -347,7 +347,7 @@ def test_an_unrelated_employee_cannot_upload_to_the_job(
 def test_photos_are_isolated_across_organizations(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     rival = make_organization(db, name="Rival Detailing")
     rival_parties = job_with_parties(db, rival)
     upload(
@@ -417,7 +417,7 @@ def test_an_employee_cannot_remove_a_photo_once_the_job_is_complete(
         ).status_code
         == 422
     )
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     assert (
         client.delete(
             f"/api/v1/jobs/{parties['job'].id}/photos/{created['id']}",

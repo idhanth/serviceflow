@@ -1,4 +1,4 @@
-"""Appointment reminders (PRD 16).
+"""Appointment reminders.
 
 A reminder goes out roughly 24 hours before the appointment. The beat runs every
 five minutes and looks at a window around that mark, so a reminder is never
@@ -24,6 +24,7 @@ from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.enums import BookingStatus, JobStatus, NotificationType
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.notification import Notification
+from serviceflow.db.tenancy import allow_cross_tenant
 from serviceflow.services import notifications
 
 logger = logging.getLogger(__name__)
@@ -70,12 +71,12 @@ def due_bookings(
                 # In the future regardless, so a late beat cannot remind about
                 # something that has already happened.
                 Booking.requested_start > now,
-                Booking.job.has(Job.status.in_([JobStatus.ASSIGNED, JobStatus.IN_PROGRESS])),
+                Booking.job.has(Job.status.in_([JobStatus.SCHEDULED, JobStatus.IN_PROGRESS])),
             )
             .options(
                 joinedload(Booking.customer).joinedload(Customer.user),
                 joinedload(Booking.service),
-                joinedload(Booking.vehicle),
+                joinedload(Booking.job).joinedload(Job.employee),
             )
             .order_by(Booking.requested_start)
         ).unique()
@@ -94,6 +95,9 @@ def create_due_reminders(
     The advisory lock is transaction-scoped: it is released by the commit or
     rollback below, and it is what makes concurrent scheduler runs safe.
     """
+    # Reminders are due across every business at once: system work, so row level
+    # security is lifted for this session only (db/tenancy.py).
+    allow_cross_tenant(db)
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": REMINDER_LOCK_KEY})
 
     created = 0

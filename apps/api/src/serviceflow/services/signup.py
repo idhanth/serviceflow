@@ -23,6 +23,7 @@ from serviceflow.db.models.customer import Customer
 from serviceflow.db.models.enums import Role
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.user import User
+from serviceflow.db.tenancy import bind_tenant
 from serviceflow.services.people import ensure_membership
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,10 @@ def sign_up_customer(
     )
     if organization is None:
         raise NotFound("We couldn't find that business.")
+    # Signing up happens before there is a session, so the tenant comes from the
+    # business the visitor chose; row level security then holds every write here
+    # to that one organization.
+    bind_tenant(db, organization.id)
 
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValidationFailed(

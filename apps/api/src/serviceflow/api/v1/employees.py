@@ -1,7 +1,7 @@
 """Employee endpoints.
 
-The roster is admin-managed. Employees read their own profile via /employees/me;
-they cannot see or change the roster (PRD 6).
+Owners, managers, dispatchers and analysts read the roster; owners and managers
+change it. Technicians read their own profile via /employees/me.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from serviceflow.api.deps import ActiveUser, AdminUser, DbSession
+from serviceflow.api.deps import ActiveUser, DbSession, EmployeesReader, EmployeesWriter
 from serviceflow.core.pagination import Pagination, parse_sort
 from serviceflow.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
 from serviceflow.schemas.envelope import DataResponse, PagedResponse, paged
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/employees", tags=["employees"])
 
 @router.get("", response_model=PagedResponse[EmployeeRead], summary="List employees")
 def list_employees(
-    current_user: AdminUser,
+    current_user: EmployeesReader,
     db: DbSession,
     pagination: Pagination,
     q: Annotated[str | None, Query(max_length=120, description="Name, email or job title")] = None,
@@ -57,7 +57,7 @@ def get_own_employee(current_user: ActiveUser, db: DbSession) -> DataResponse[Em
 
 @router.get("/{employee_id}", response_model=DataResponse[EmployeeRead], summary="Get an employee")
 def get_employee(
-    employee_id: uuid.UUID, current_user: AdminUser, db: DbSession
+    employee_id: uuid.UUID, current_user: EmployeesReader, db: DbSession
 ) -> DataResponse[EmployeeRead]:
     employee = employees_service.get_employee(db, current_user.organization_id, employee_id)
     return DataResponse[EmployeeRead](data=EmployeeRead.from_model(employee))
@@ -70,7 +70,7 @@ def get_employee(
     summary="Add an employee",
 )
 def create_employee(
-    payload: EmployeeCreate, current_user: AdminUser, db: DbSession
+    payload: EmployeeCreate, current_user: EmployeesWriter, db: DbSession
 ) -> DataResponse[EmployeeRead]:
     employee = employees_service.create_employee(
         db,
@@ -90,7 +90,7 @@ def create_employee(
     "/{employee_id}", response_model=DataResponse[EmployeeRead], summary="Update an employee"
 )
 def update_employee(
-    employee_id: uuid.UUID, payload: EmployeeUpdate, current_user: AdminUser, db: DbSession
+    employee_id: uuid.UUID, payload: EmployeeUpdate, current_user: EmployeesWriter, db: DbSession
 ) -> DataResponse[EmployeeRead]:
     changes = payload.model_dump(exclude_unset=True)
     employee = employees_service.update_employee(

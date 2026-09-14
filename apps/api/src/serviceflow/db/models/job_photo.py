@@ -3,7 +3,15 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+)
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -35,6 +43,11 @@ class JobPhoto(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
 
     __tablename__ = "job_photos"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "job_id"],
+            ["jobs.organization_id", "jobs.id"],
+            ondelete="CASCADE",
+        ),
         # The bucket is shared across tenants, so a key must be unique globally.
         CheckConstraint("file_size > 0", name="file_size_positive"),
         CheckConstraint(f"file_size <= {MAX_PHOTO_BYTES}", name="file_size_within_limit"),
@@ -45,12 +58,7 @@ class JobPhoto(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
         Index("ix_job_photos_job_id_created_at", "job_id", "created_at"),
     )
 
-    job_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    job_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
@@ -65,5 +73,9 @@ class JobPhoto(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
     mime_type: Mapped[str] = mapped_column(String(60), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    job: Mapped[Job] = relationship(back_populates="photos")
+    job: Mapped[Job] = relationship(
+        back_populates="photos",
+        primaryjoin="JobPhoto.job_id == Job.id",
+        foreign_keys="JobPhoto.job_id",
+    )
     uploader: Mapped[User] = relationship(lazy="joined")

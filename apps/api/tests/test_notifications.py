@@ -46,7 +46,6 @@ def _pending(db: Session, organization: Organization, setup: dict):  # type: ign
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=4),
     )
@@ -58,14 +57,13 @@ def _pending(db: Session, organization: Organization, setup: dict):  # type: ign
 def test_creating_a_booking_notifies_the_admin_and_the_customer(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
 
     response = client.post(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -79,7 +77,7 @@ def test_creating_a_booking_notifies_the_admin_and_the_customer(
 def test_confirming_notifies_the_customer_with_the_technician(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = _pending(db, organization, setup)
 
@@ -109,7 +107,7 @@ def test_confirming_notifies_the_customer_with_the_technician(
 def test_rejecting_notifies_the_customer(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = _pending(db, organization, setup)
 
@@ -122,7 +120,7 @@ def test_rejecting_notifies_the_customer(
 def test_rescheduling_notifies_the_customer_and_the_technician(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = _pending(db, organization, setup)
     headers = auth_headers(client, admin)
@@ -145,7 +143,7 @@ def test_rescheduling_notifies_the_customer_and_the_technician(
 def test_an_admin_cancellation_notifies_the_customer(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = _pending(db, organization, setup)
 
@@ -159,7 +157,7 @@ def test_a_customer_cancellation_notifies_the_admin_instead(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """Whoever did not do the cancelling is the one who needs telling."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = _pending(db, organization, setup)
 
@@ -195,7 +193,8 @@ def test_starting_and_completing_a_job_notify_the_customer(
         )
         .one()
     )
-    assert parties["booking"].vehicle.display_name in completed.body
+    assert parties["service"].name in completed.subject
+    assert "photos and notes" in completed.body
     # ...and an email row exists alongside it for the worker.
     assert (
         db.query(Notification)
@@ -218,7 +217,7 @@ def test_a_failed_confirmation_leaves_no_notification(
         def check_assignment(self, session, request: AssignmentRequest) -> None:  # type: ignore[no-untyped-def]
             raise DependencyUnavailable("Scheduling is unavailable.")
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     booking = _pending(db, organization, setup)
     before = db.query(Notification).count()
@@ -248,7 +247,6 @@ def test_a_rejected_booking_creation_leaves_no_notification(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).isoformat(),
         },
@@ -263,13 +261,12 @@ def test_a_rejected_booking_creation_leaves_no_notification(
 def test_a_user_sees_only_their_own_notifications(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     client.post(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -357,13 +354,12 @@ def test_marking_all_read(client: TestClient, db: Session, organization: Organiz
 def test_another_users_notification_cannot_be_marked_read(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     client.post(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -382,14 +378,13 @@ def test_another_users_notification_cannot_be_marked_read(
 def test_notifications_read_newest_first_and_paginate(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     for offset in range(3):
         make_booking(
             db,
             organization,
             setup["customer"],
-            setup["vehicle"],
             setup["service"],
             start=future_start(days=5 + offset),
         )
@@ -397,7 +392,6 @@ def test_notifications_read_newest_first_and_paginate(
             "/api/v1/bookings",
             headers=auth_headers(client, setup["customer_user"]),
             json={
-                "vehicle_id": str(setup["vehicle"].id),
                 "service_id": str(setup["service"].id),
                 "requested_start": future_start(days=11 + offset).isoformat(),
             },

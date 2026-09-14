@@ -37,6 +37,7 @@ from serviceflow.db.models.idempotency import (
     MIN_KEY_LENGTH,
     IdempotencyRecord,
 )
+from serviceflow.db.tenancy import allow_cross_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,7 @@ def complete(
 
 def purge_expired(db: Session, *, limit: int = 500) -> int:
     """Delete expired records. Safe to run repeatedly; commits its own work."""
+    allow_cross_tenant(db)  # expiry is swept across every tenant
     now = datetime.now(UTC)
     stale = list(
         db.scalars(

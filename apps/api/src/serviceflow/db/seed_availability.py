@@ -1,4 +1,4 @@
-"""Weekly schedules and date overrides for the demo employees (PRD 10)."""
+"""Weekly schedules and date overrides for the demo technicians."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.organization import Organization
-from serviceflow.db.seed_data import OVERRIDE_SPECS, WEEKLY_SHIFTS
+from serviceflow.db.seed_data import OVERRIDE_SPECS, WEEKDAYS, WEEKLY_SHIFTS, ShiftSpec
+
+DEFAULT_SHIFTS: list[ShiftSpec] = [{"days": WEEKDAYS, "start": "08:00", "end": "17:00"}]
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,11 @@ def seed_availability(db: Session, org: Organization) -> dict[str, int]:
         employee.user.email: employee
         for employee in db.scalars(select(Employee).where(Employee.organization_id == org.id))
     }
+    # A technician gets the default week unless the reference data says otherwise.
+    shifts_by_email = {email: WEEKLY_SHIFTS.get(email, DEFAULT_SHIFTS) for email in employees}
 
     windows = 0
-    for email, shifts in WEEKLY_SHIFTS.items():
+    for email, shifts in shifts_by_email.items():
         employee = employees.get(email)
         if employee is None:
             continue

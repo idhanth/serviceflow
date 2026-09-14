@@ -9,6 +9,7 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from serviceflow.core.config import get_settings
+from serviceflow.db.tenancy import allow_cross_tenant
 
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
@@ -28,6 +29,7 @@ def get_engine() -> Engine:
             # threads and throughput collapses rather than degrading. Failing
             # fast frees the thread and lets the caller be told to retry.
             pool_timeout=settings.database_pool_timeout,
+            pool_recycle=settings.database_pool_recycle,
             pool_pre_ping=True,
             echo=settings.database_echo,
             future=True,
@@ -46,8 +48,14 @@ def get_session_factory() -> sessionmaker[Session]:
 
 @contextmanager
 def session_scope() -> Iterator[Session]:
-    """Transactional scope for background jobs, seeds and scripts."""
+    """Transactional scope for background jobs, seeds and scripts.
+
+    These sessions work across tenants by nature - the outbox sweep delivers
+    every business's email - so they are the one place row level security is
+    bypassed (see db/tenancy.py). Request handlers never use this.
+    """
     session = get_session_factory()()
+    allow_cross_tenant(session)
     try:
         yield session
         session.commit()

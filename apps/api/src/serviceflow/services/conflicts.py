@@ -7,9 +7,9 @@ Two independent mechanisms guard the "no double-booked employee" invariant:
      interleaving their check-then-write. This is what turns a race into a clean
      409 with a message naming the clashing job.
   2. `jobs` carries a PostgreSQL exclusion constraint over
-     (employee_id, tstzrange(scheduled_start, scheduled_end)) for non-cancelled
-     rows. Even a future code path that forgets the lock cannot write an overlap;
-     the database refuses it.
+     (organization_id, employee_id, tstzrange(scheduled_start, scheduled_end))
+     for jobs that hold a technician's time. Even a future code path that forgets
+     the lock cannot write an overlap; the database refuses it.
 
 See docs/adr-0004 for why both, rather than either alone.
 """
@@ -28,6 +28,8 @@ from serviceflow.db.models.job import Job
 # Raised by the exclusion constraint below; matched by name so an unrelated
 # integrity error is never mistaken for a scheduling clash.
 OVERLAP_CONSTRAINT = "jobs_no_overlapping_assignments"
+
+TIME_HOLDING_STATUSES = (JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.COMPLETED)
 
 
 def lock_employee_schedule(db: Session, employee_id: uuid.UUID) -> None:
@@ -52,25 +54,33 @@ def overlapping_jobs(
     end: datetime,
     exclude_job_id: uuid.UUID | None = None,
 ) -> list[Job]:
-    """Non-cancelled jobs for this employee that overlap [start, end).
+    """Jobs holding this employee's time that overlap [start, end).
 
     The rule is PRD 9's exactly:  new_start < existing_end AND new_end > existing_start
 
     Adjacent appointments therefore do not conflict: 10:00-12:00 and 12:00-14:00
     both satisfy neither strict inequality at the boundary. Cancelled jobs are
-    excluded because cancelling is what frees a slot; completed jobs still block,
-    since that time really was spent.
+    excluded because cancelling is what frees a slot, and NEW jobs have nobody
+    assigned; completed jobs still block, since that time really was spent. The
+    status set matches the exclusion constraint's WHERE clause exactly.
     """
     statement = select(Job).where(
         Job.organization_id == organization_id,
         Job.employee_id == employee_id,
-        Job.status != JobStatus.CANCELLED,
+        Job.status.in_(TIME_HOLDING_STATUSES),
         Job.scheduled_start < end,
         Job.scheduled_end > start,
     )
     if exclude_job_id is not None:
         statement = statement.where(Job.id != exclude_job_id)
-    return list(db.scalars(statement).unique())
+    return list(db.scalars(statement.order_by(Job.scheduled_start)).unique())
+
+
+def is_duplicate_booking_violation(error: Exception) -> bool:
+    """True when an IntegrityError came from the no-duplicate-open-booking index."""
+    from serviceflow.db.models.booking import NO_DUPLICATE_INDEX
+
+    return NO_DUPLICATE_INDEX in str(getattr(error, "orig", error))
 
 
 def is_overlap_violation(error: Exception) -> bool:

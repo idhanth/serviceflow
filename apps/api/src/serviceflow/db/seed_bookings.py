@@ -1,9 +1,24 @@
-"""Booking and job seeding for the demo organization (PRD 49).
+"""Booking and job seeding for the demo businesses.
 
-Deterministic given a fixed RNG seed, and idempotent: it tops the organization up
-to the target counts rather than appending on every run. Dates are anchored to
-today so the demo always looks current, and are built in the organization's own
-timezone before being stored as UTC (PRD 40).
+Deterministic given a fixed RNG seed, and idempotent: a business's bookings are
+generated once. Dates are anchored to *now* so the demo always looks current,
+and are built in the business's own timezone before being stored as UTC.
+
+Every booking gets its job, in the state the product itself would have left it:
+
+    completed history   CONFIRMED booking, COMPLETED job with a technician
+    cancelled           CANCELLED booking, CANCELLED job
+    rejected            REJECTED booking,  CANCELLED job
+    upcoming            CONFIRMED booking, SCHEDULED job with a technician
+    waiting             PENDING booking,   NEW job, nobody assigned
+
+Today is built separately so the dashboard and schedule have something real on
+them: each technician working today gets a few jobs, and their state follows the
+clock - finished before now, under way now, still to come. One job that should
+have started is left unstarted, so "running late" has an example.
+
+Nothing here can violate the database's rules: the in-memory `Schedule` refuses
+overlaps and hours outside availability before PostgreSQL would.
 """
 
 from __future__ import annotations
@@ -13,10 +28,11 @@ import logging
 import random
 import uuid
 from datetime import UTC, datetime, time, timedelta
+from typing import cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
@@ -26,36 +42,25 @@ from serviceflow.db.models.job import Job
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
-from serviceflow.db.models.vehicle import Vehicle
+from serviceflow.db.seed_data import DEMO_TENANT_SLUG, TenantSpec
 from serviceflow.services.availability import (
     DateOverride,
     WeeklyWindow,
     evaluate_window,
+    merge,
+    windows_for_date,
 )
 
 logger = logging.getLogger(__name__)
 
-BOOKING_COUNT = 250
-COMPLETED_JOB_COUNT = 180
-BUSINESS_HOURS = (8, 16)  # local start hour range
+BUSINESS_HOURS = (7, 17)  # local start-hour range for generated appointments
 PAST_WINDOW_DAYS = 120
 FUTURE_WINDOW_DAYS = 21
-
-CUSTOMER_REQUESTS = [
-    None,
-    None,
-    None,
-    "Please pay extra attention to the wheels.",
-    "There's a coffee stain on the passenger seat.",
-    "Dropping off the night before if that's alright.",
-    "Water spots on the hood after the last rain.",
-    "Would like the pet hair removed from the back seats.",
-    "Getting it ready to sell - whatever makes it shine.",
-]
+TODAY_JOBS_PER_TECHNICIAN = 3
 
 
 def _local_slot(rng: random.Random, tz: ZoneInfo, day_offset: int) -> datetime:
-    """A plausible appointment start, on the half hour, in the shop's timezone."""
+    """A plausible appointment start, on the half hour, in the business's timezone."""
     day = (datetime.now(tz) + timedelta(days=day_offset)).date()
     hour = rng.randint(*BUSINESS_HOURS)
     minute = rng.choice([0, 30])
@@ -67,21 +72,15 @@ def _qualified(employees: list[Employee], service: Service) -> list[Employee]:
 
 
 class Schedule:
-    """Tracks who is busy while seeding, so generated jobs never overlap.
-
-    The database now carries an exclusion constraint that forbids overlapping
-    assignments, so a seed that ignored this would simply fail to insert. It also
-    honours each employee's weekly availability, which keeps the demo calendar
-    and the recommendation panel coherent.
-    """
+    """Tracks who is busy while seeding, so generated jobs never overlap."""
 
     def __init__(self, timezone: str) -> None:
-        self._timezone = timezone
+        self.timezone = timezone
         self._busy: dict[uuid.UUID, list[tuple[datetime, datetime]]] = {}
         self._weekly: dict[uuid.UUID, list[WeeklyWindow]] = {}
         self._overrides: dict[uuid.UUID, dict[dt.date, DateOverride]] = {}
 
-    def load(self, db: Session, employees: list[Employee]) -> None:
+    def load(self, employees: list[Employee]) -> None:
         for employee in employees:
             self._weekly[employee.id] = [
                 WeeklyWindow(
@@ -103,13 +102,27 @@ class Schedule:
             }
             self._busy.setdefault(employee.id, [])
 
+    def windows_on(self, employee: Employee, date: dt.date) -> list[tuple[datetime, datetime]]:
+        """The employee's working windows on a local date, as UTC instants."""
+        tz = ZoneInfo(self.timezone)
+        override = self._overrides.get(employee.id, {}).get(date)
+        windows = merge(windows_for_date(date, self._weekly.get(employee.id, []), override))
+        midnight = datetime.combine(date, time.min, tzinfo=tz)
+        return [
+            (
+                (midnight + timedelta(minutes=w.start)).astimezone(UTC),
+                (midnight + timedelta(minutes=w.end)).astimezone(UTC),
+            )
+            for w in windows
+        ]
+
     def free(self, employee: Employee, start: datetime, end: datetime) -> bool:
         if any(s < end and e > start for s, e in self._busy.get(employee.id, [])):
             return False
         return evaluate_window(
             start,
             end,
-            timezone=self._timezone,
+            timezone=self.timezone,
             weekly=self._weekly.get(employee.id, []),
             overrides=self._overrides.get(employee.id, {}),
         ).available
@@ -131,187 +144,184 @@ class Schedule:
         return None
 
 
-def _add_booking(
-    db: Session,
-    org: Organization,
-    *,
-    customer: Customer,
-    vehicle: Vehicle,
-    service: Service,
-    start: datetime,
-    status: BookingStatus,
-    customer_notes: str | None = None,
-) -> Booking:
-    booking = Booking(
-        organization_id=org.id,
-        customer_id=customer.id,
-        vehicle_id=vehicle.id,
-        service_id=service.id,
-        requested_start=start,
-        requested_end=start + timedelta(minutes=service.duration_minutes),
-        status=status,
-        customer_notes=customer_notes,
-    )
-    db.add(booking)
-    db.flush()
-    return booking
+class Writer:
+    """Adds bookings with their jobs, refusing exact duplicates of open bookings."""
+
+    def __init__(self, db: Session, org: Organization) -> None:
+        self.db = db
+        self.org = org
+        self.open_keys: set[tuple[uuid.UUID, uuid.UUID, datetime]] = set()
+        self.bookings = 0
+
+    def add(
+        self,
+        *,
+        customer: Customer,
+        service: Service,
+        start: datetime,
+        booking_status: BookingStatus,
+        job_status: JobStatus,
+        employee: Employee | None = None,
+        customer_notes: str | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> Booking | None:
+        key = (customer.id, service.id, start)
+        is_open = booking_status in (BookingStatus.PENDING, BookingStatus.CONFIRMED)
+        if is_open and key in self.open_keys:
+            return None
+        end = start + timedelta(minutes=service.duration_minutes)
+        booking = Booking(
+            organization_id=self.org.id,
+            customer_id=customer.id,
+            service_id=service.id,
+            requested_start=start,
+            requested_end=end,
+            status=booking_status,
+            customer_notes=customer_notes,
+        )
+        self.db.add(booking)
+        self.db.flush()
+        self.db.add(
+            Job(
+                organization_id=self.org.id,
+                booking_id=booking.id,
+                employee_id=employee.id if employee else None,
+                scheduled_start=start,
+                scheduled_end=end,
+                status=job_status,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+        )
+        if is_open:
+            self.open_keys.add(key)
+        self.bookings += 1
+        return booking
 
 
-def _add_job(
-    db: Session,
-    org: Organization,
-    booking: Booking,
-    employee: Employee,
-    status: JobStatus,
-) -> Job:
-    started = completed = None
-    if status in (JobStatus.IN_PROGRESS, JobStatus.COMPLETED):
-        started = booking.requested_start
-    if status is JobStatus.COMPLETED:
-        completed = booking.requested_end
-
-    job = Job(
-        organization_id=org.id,
-        booking_id=booking.id,
-        employee_id=employee.id,
-        scheduled_start=booking.requested_start,
-        scheduled_end=booking.requested_end,
-        status=status,
-        started_at=started,
-        completed_at=completed,
-    )
-    db.add(job)
-    db.flush()
-    return job
-
-
-def _vehicles_by_customer(db: Session, org: Organization) -> dict[uuid.UUID, list[Vehicle]]:
-    pairs: dict[uuid.UUID, list[Vehicle]] = {}
-    for vehicle in db.scalars(
-        select(Vehicle)
-        .where(Vehicle.organization_id == org.id, Vehicle.archived_at.is_(None))
-        # Ordered by natural attributes so a rebuild walks them the same way.
-        .order_by(Vehicle.license_plate)
-    ):
-        pairs.setdefault(vehicle.customer_id, []).append(vehicle)
-    return pairs
-
-
-def seed_demo_customer_story(
-    db: Session,
-    org: Organization,
+def _seed_today(
     rng: random.Random,
     *,
-    services: list[Service],
-    employees: list[Employee],
-    vehicles_by_customer: dict[uuid.UUID, list[Vehicle]],
+    writer: Writer,
     schedule: Schedule,
-) -> None:
-    """Give the demo customer and demo employee something worth looking at.
+    employees: list[Employee],
+    services: list[Service],
+    customers: list[Customer],
+    spec: TenantSpec,
+) -> int:
+    """A few jobs per technician working today, in the state the clock implies."""
+    tz = ZoneInfo(schedule.timezone)
+    now = datetime.now(UTC)
+    today = now.astimezone(tz).date()
+    late_left = 1
+    created = 0
 
-    Without this the demo accounts would land on whatever the random distribution
-    happened to give them, which is often nothing.
-    """
-    demo_customer = db.scalar(
-        select(Customer)
-        .join(Customer.user)
-        .where(Customer.organization_id == org.id)
-        .where(Customer.user.has(email="customer@serviceflow.demo"))
-    )
-    demo_employee = db.scalar(
-        select(Employee)
-        .where(Employee.organization_id == org.id)
-        .where(Employee.user.has(email="employee@serviceflow.demo"))
-    )
-    if demo_customer is None or demo_employee is None:
-        return
-
-    fleet = vehicles_by_customer.get(demo_customer.id, [])
-    if not fleet:
-        return
-
-    tz = ZoneInfo(org.timezone)
-    by_name = {service.name: service for service in services}
-    existing = db.scalar(
-        select(func.count())
-        .select_from(Booking)
-        .where(Booking.organization_id == org.id, Booking.customer_id == demo_customer.id)
-    )
-    if existing:
-        return
-
-    # A job scheduled today and not yet started, so "Start job" is demoable.
-    # Retried until it lands inside the demo employee's working hours.
-    service = by_name["Full Detail"]
-    for _ in range(60):
-        today = _local_slot(rng, tz, 0)
-        end = today + timedelta(minutes=service.duration_minutes)
-        if schedule.free(demo_employee, today, end):
-            booking = _add_booking(
-                db,
-                org,
-                customer=demo_customer,
-                vehicle=fleet[0],
-                service=service,
-                start=today,
-                status=BookingStatus.CONFIRMED,
-                customer_notes="Please pay extra attention to the wheels.",
-            )
-            _add_job(db, org, booking, demo_employee, JobStatus.ASSIGNED)
-            schedule.take(demo_employee, today, end)
-            break
-
-    # A pending request waiting on admin review.
-    _add_booking(
-        db,
-        org,
-        customer=demo_customer,
-        vehicle=fleet[min(1, len(fleet) - 1)],
-        service=by_name["Interior Detail"],
-        start=_local_slot(rng, tz, 4),
-        status=BookingStatus.PENDING,
-        customer_notes="There's a coffee stain on the passenger seat.",
-    )
-
-    # Two finished visits, so the customer has history.
-    for offset, service_name in ((-30, "Express Wash"), (-75, "Ceramic Coating")):
-        past_service = by_name[service_name]
-        candidates = _qualified(employees, past_service)
-        if not candidates:
+    for employee in sorted(employees, key=lambda e: e.user.email):
+        qualified = [s for s in services if any(q.id == s.id for q in employee.services)]
+        if not qualified:
             continue
-        for _ in range(60):
+        placed = 0
+        for window_start, window_end in schedule.windows_on(employee, today):
+            cursor = window_start
+            while placed < TODAY_JOBS_PER_TECHNICIAN and cursor < window_end:
+                service = rng.choice(qualified)
+                end = cursor + timedelta(minutes=service.duration_minutes)
+                if end > window_end:
+                    break
+                if schedule.free(employee, cursor, end):
+                    if end <= now:
+                        status, started, completed = JobStatus.COMPLETED, cursor, end
+                    elif cursor <= now - timedelta(minutes=20) and late_left:
+                        # Should have started and hasn't: the dashboard's "running late".
+                        status, started, completed = JobStatus.SCHEDULED, None, None
+                        late_left -= 1
+                    elif cursor <= now:
+                        status, started, completed = JobStatus.IN_PROGRESS, cursor, None
+                    else:
+                        status, started, completed = JobStatus.SCHEDULED, None, None
+                    booking = writer.add(
+                        customer=rng.choice(customers),
+                        service=service,
+                        start=cursor,
+                        booking_status=BookingStatus.CONFIRMED,
+                        job_status=status,
+                        employee=employee,
+                        customer_notes=rng.choice(spec["customer_requests"]),
+                        started_at=started,
+                        completed_at=completed,
+                    )
+                    if booking is not None:
+                        schedule.take(employee, cursor, end)
+                        placed += 1
+                        created += 1
+                # A gap for travel between visits, as a dispatcher would leave.
+                cursor = end + timedelta(minutes=rng.choice([30, 45, 60]))
+    return created
+
+
+def _seed_demo_customer(
+    rng: random.Random,
+    *,
+    writer: Writer,
+    schedule: Schedule,
+    employees: list[Employee],
+    services: dict[str, Service],
+    customer: Customer,
+) -> None:
+    """Give the demo customer an upcoming visit, a request, and some history."""
+    tz = ZoneInfo(schedule.timezone)
+    technician = next((e for e in employees if e.user.email == "employee@serviceflow.demo"), None)
+
+    plans = [
+        (2, "HVAC Inspection", BookingStatus.CONFIRMED, JobStatus.SCHEDULED, technician),
+        (5, "Drain Cleaning", BookingStatus.PENDING, JobStatus.NEW, None),
+        (-21, "Preventive Maintenance", BookingStatus.CONFIRMED, JobStatus.COMPLETED, None),
+        (-64, "Electrical Safety Inspection", BookingStatus.CONFIRMED, JobStatus.COMPLETED, None),
+        (-140, "HVAC Inspection", BookingStatus.CONFIRMED, JobStatus.COMPLETED, technician),
+        (-40, "Consultation", BookingStatus.CANCELLED, JobStatus.CANCELLED, None),
+    ]
+    for offset, service_name, booking_status, job_status, preferred in plans:
+        service = services.get(service_name)
+        if service is None:
+            continue
+        needs_technician = job_status in (JobStatus.SCHEDULED, JobStatus.COMPLETED)
+        for _ in range(80):
             start = _local_slot(rng, tz, offset)
-            end = start + timedelta(minutes=past_service.duration_minutes)
-            chosen = schedule.pick(rng, candidates, start, end)
-            if chosen is None:
-                continue
-            past = _add_booking(
-                db,
-                org,
-                customer=demo_customer,
-                vehicle=fleet[0],
-                service=past_service,
+            end = start + timedelta(minutes=service.duration_minutes)
+            employee = None
+            if needs_technician:
+                candidates = (
+                    [preferred] if preferred is not None else _qualified(employees, service)
+                )
+                employee = schedule.pick(rng, candidates, start, end)
+                if employee is None:
+                    continue
+            booking = writer.add(
+                customer=customer,
+                service=service,
                 start=start,
-                status=BookingStatus.CONFIRMED,
+                booking_status=booking_status,
+                job_status=job_status,
+                employee=employee,
+                customer_notes="The upstairs AC isn't keeping up in the afternoons."
+                if offset == 2
+                else None,
+                started_at=start if job_status is JobStatus.COMPLETED else None,
+                completed_at=end if job_status is JobStatus.COMPLETED else None,
             )
-            _add_job(db, org, past, chosen, JobStatus.COMPLETED)
-            schedule.take(chosen, start, end)
+            if booking is not None and employee is not None:
+                schedule.take(employee, start, end)
             break
 
 
-def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[str, int]:
-    """Top the organization up to the PRD 49 volumes.
-
-    The composition is planned explicitly rather than rolled per booking, so the
-    totals are exact and reproducible instead of approximately right.
-    """
-    if (
-        db.scalar(
-            select(func.count()).select_from(Booking).where(Booking.organization_id == org.id)
-        )
-        or 0
-    ) >= BOOKING_COUNT:
-        return {"bookings": 0, "jobs": 0}
+def seed_bookings(
+    db: Session, org: Organization, spec: TenantSpec, rng: random.Random
+) -> dict[str, int]:
+    if db.scalar(
+        select(func.count()).select_from(Booking).where(Booking.organization_id == org.id)
+    ):
+        return {"bookings": 0}
 
     services = list(
         db.scalars(select(Service).where(Service.organization_id == org.id).order_by(Service.name))
@@ -321,141 +331,114 @@ def seed_bookings(db: Session, org: Organization, rng: random.Random) -> dict[st
             select(Employee)
             .where(Employee.organization_id == org.id)
             .join(Employee.user)
+            .options(
+                selectinload(Employee.services),
+                selectinload(Employee.availability),
+                selectinload(Employee.availability_overrides),
+            )
             .order_by(User.email)
-        )
+        ).unique()
     )
-    vehicles_by_customer = _vehicles_by_customer(db, org)
-    owners = [
-        owner
-        for owner in (db.get(Customer, customer_id) for customer_id in vehicles_by_customer)
-        if owner is not None
-    ]
-    if not services or not employees or not owners:
-        return {"bookings": 0, "jobs": 0}
+    customers = list(
+        db.scalars(
+            select(Customer)
+            .where(Customer.organization_id == org.id)
+            .join(Customer.user)
+            .order_by(User.email)
+        ).unique()
+    )
+    if not services or not employees or not customers:
+        return {"bookings": 0}
 
     tz = ZoneInfo(org.timezone)
     schedule = Schedule(org.timezone)
-    schedule.load(db, employees)
+    schedule.load(employees)
+    writer = Writer(db, org)
 
-    # The demo accounts get their story first; it counts against the budget below.
-    seed_demo_customer_story(
-        db,
-        org,
+    demo = next((c for c in customers if c.user.email == "customer@serviceflow.demo"), None)
+    others = [c for c in customers if c is not demo] or customers
+    if spec["slug"] == DEMO_TENANT_SLUG and demo is not None:
+        _seed_demo_customer(
+            rng,
+            writer=writer,
+            schedule=schedule,
+            employees=employees,
+            services={s.name: s for s in services},
+            customer=demo,
+        )
+
+    today = _seed_today(
         rng,
-        services=services,
-        employees=employees,
-        vehicles_by_customer=vehicles_by_customer,
+        writer=writer,
         schedule=schedule,
+        employees=employees,
+        services=services,
+        customers=others,
+        spec=spec,
     )
 
-    already = (
-        db.scalar(
-            select(func.count()).select_from(Booking).where(Booking.organization_id == org.id)
-        )
-        or 0
-    )
-    completed_already = (
-        db.scalar(
-            select(func.count())
-            .select_from(Job)
-            .where(Job.organization_id == org.id, Job.status == JobStatus.COMPLETED)
-        )
-        or 0
-    )
-
-    remaining = BOOKING_COUNT - already
-    completed_needed = max(COMPLETED_JOB_COUNT - completed_already, 0)
-
-    # Split what is left: mostly completed history, then cancellations, rejections
-    # and a slice of upcoming work.
-    plan: list[str] = ["past_completed"] * min(completed_needed, remaining)
-    leftover = remaining - len(plan)
-    if leftover > 0:
-        shares = [
-            ("past_cancelled", 0.34),
-            ("past_rejected", 0.20),
-            ("future_confirmed", 0.26),
-            ("future_pending", 0.20),
-        ]
-        for label, share in shares[:-1]:
-            plan.extend([label] * round(leftover * share))
-        plan.extend([shares[-1][0]] * (remaining - len(plan)))
+    # The rest of the history is planned explicitly rather than rolled per
+    # booking, so the totals are exact and reproducible.
+    composition = cast(dict[str, int], spec["composition"])
+    plan = [kind for kind, count in composition.items() for _ in range(count)]
     rng.shuffle(plan)
 
-    created_bookings = 0
-    created_jobs = 0
-
+    outcome = {
+        "past_completed": (BookingStatus.CONFIRMED, JobStatus.COMPLETED),
+        "past_cancelled": (BookingStatus.CANCELLED, JobStatus.CANCELLED),
+        "past_rejected": (BookingStatus.REJECTED, JobStatus.CANCELLED),
+        "future_confirmed": (BookingStatus.CONFIRMED, JobStatus.SCHEDULED),
+        "future_pending": (BookingStatus.PENDING, JobStatus.NEW),
+    }
     queue = list(plan)
     attempts = 0
-    while queue and attempts < BOOKING_COUNT * 12:
+    while queue and attempts < len(plan) * 12:
         attempts += 1
         kind = queue.pop(0)
-        customer = rng.choice(owners)
-        fleet = vehicles_by_customer.get(customer.id, [])
-        if not fleet:
-            continue
-        vehicle = rng.choice(fleet)
-
+        booking_status, job_status = outcome[kind]
         past = kind.startswith("past")
-        needs_employee = kind in ("past_completed", "future_confirmed")
-
         offset_range = (-PAST_WINDOW_DAYS, -1) if past else (1, FUTURE_WINDOW_DAYS)
+        customer = rng.choice(others)
 
-        employee = None
-        if needs_employee:
-            # Only offer services someone is actually qualified to perform, and
-            # keep retrying slots until one is free and inside working hours.
+        employee: Employee | None = None
+        if job_status in (JobStatus.COMPLETED, JobStatus.SCHEDULED):
             options = [s for s in services if _qualified(employees, s)]
-            if not options:
-                continue
             service = rng.choice(options)
             for _ in range(80):
-                start_at = _local_slot(rng, tz, rng.randint(*offset_range))
-                end_at = start_at + timedelta(minutes=service.duration_minutes)
-                employee = schedule.pick(rng, _qualified(employees, service), start_at, end_at)
+                start = _local_slot(rng, tz, rng.randint(*offset_range))
+                end = start + timedelta(minutes=service.duration_minutes)
+                employee = schedule.pick(rng, _qualified(employees, service), start, end)
                 if employee is not None:
                     break
             if employee is None:
-                # Nobody free in that stretch of the calendar. Put the slot back
-                # and try again later rather than downgrading it, so the planned
-                # composition stays exact.
+                # Nobody free in that stretch of the calendar: retry the slot later
+                # rather than downgrading it, so the composition stays exact.
                 queue.append(kind)
                 continue
         else:
             service = rng.choice(services)
-            start_at = _local_slot(rng, tz, rng.randint(*offset_range))
+            start = _local_slot(rng, tz, rng.randint(*offset_range))
+            end = start + timedelta(minutes=service.duration_minutes)
 
-        status = {
-            "past_completed": BookingStatus.CONFIRMED,
-            "past_cancelled": BookingStatus.CANCELLED,
-            "past_rejected": BookingStatus.REJECTED,
-            "future_confirmed": BookingStatus.CONFIRMED,
-            "future_pending": BookingStatus.PENDING,
-        }[kind]
-
-        booking = _add_booking(
-            db,
-            org,
+        booking = writer.add(
             customer=customer,
-            vehicle=vehicle,
             service=service,
-            start=start_at,
-            status=status,
-            customer_notes=rng.choice(CUSTOMER_REQUESTS),
+            start=start,
+            booking_status=booking_status,
+            job_status=job_status,
+            employee=employee,
+            customer_notes=rng.choice(spec["customer_requests"]),
+            started_at=start if job_status is JobStatus.COMPLETED else None,
+            completed_at=end if job_status is JobStatus.COMPLETED else None,
         )
-        created_bookings += 1
-
+        if booking is None:
+            queue.append(kind)
+            continue
         if employee is not None:
-            _add_job(
-                db,
-                org,
-                booking,
-                employee,
-                JobStatus.COMPLETED if kind == "past_completed" else JobStatus.ASSIGNED,
-            )
-            schedule.take(employee, booking.requested_start, booking.requested_end)
-            created_jobs += 1
+            schedule.take(employee, start, end)
 
     db.flush()
-    logger.info("seeded bookings", extra={"bookings": created_bookings, "jobs": created_jobs})
-    return {"bookings": created_bookings, "jobs": created_jobs}
+    logger.info(
+        "seeded bookings", extra={"slug": spec["slug"], "bookings": writer.bookings, "today": today}
+    )
+    return {"bookings": writer.bookings, "today_jobs": today}

@@ -30,9 +30,9 @@ from tests.conftest import (
 def test_confirmation_creates_exactly_one_job(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -42,7 +42,7 @@ def test_confirmation_creates_exactly_one_job(
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["status"] == "CONFIRMED"
-    assert data["job"]["status"] == "ASSIGNED"
+    assert data["job"]["status"] == "SCHEDULED"
     assert data["job"]["employee_name"] == setup["employee"].user.full_name
 
     jobs = db.query(Job).filter_by(booking_id=booking.id).all()
@@ -55,9 +55,9 @@ def test_confirmation_creates_exactly_one_job(
 def test_confirming_twice_does_not_create_a_second_job(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, admin)
     payload = {"employee_id": str(setup["employee"].id)}
 
@@ -81,10 +81,10 @@ def test_a_second_job_row_is_refused_by_the_database(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
+    # make_booking already wrote the booking's one job; a second must be refused.
     db.add(
         Job(
             organization_id=organization.id,
@@ -92,20 +92,10 @@ def test_a_second_job_row_is_refused_by_the_database(
             employee_id=setup["employee"].id,
             scheduled_start=booking.requested_start,
             scheduled_end=booking.requested_end,
+            status=JobStatus.SCHEDULED,
         )
     )
-    db.commit()
-
-    db.add(
-        Job(
-            organization_id=organization.id,
-            booking_id=booking.id,
-            employee_id=setup["employee"].id,
-            scheduled_start=booking.requested_start,
-            scheduled_end=booking.requested_end,
-        )
-    )
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError, match="one_job_per_booking"):
         db.commit()
     db.rollback()
 
@@ -113,11 +103,11 @@ def test_a_second_job_row_is_refused_by_the_database(
 def test_an_inactive_employee_cannot_be_assigned(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     setup["employee"].active = False
     db.commit()
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -130,19 +120,21 @@ def test_an_inactive_employee_cannot_be_assigned(
     # The booking must be untouched and no job created.
     db.expire_all()
     assert db.get(Booking, booking.id).status is BookingStatus.PENDING
-    assert db.query(Job).count() == 0
+    assert (
+        db.query(Job).filter(Job.employee_id.is_not(None)).count() == 0
+    )  # the booking's job stays unassigned
 
 
 def test_an_unqualified_employee_cannot_be_assigned(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     other_service = make_service(db, organization, name="Express Wash", duration_minutes=45)
     generalist = make_employee(
         db, organization, email="generalist@example.com", services=[other_service]
     )
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -154,7 +146,9 @@ def test_an_unqualified_employee_cannot_be_assigned(
 
     db.expire_all()
     assert db.get(Booking, booking.id).status is BookingStatus.PENDING
-    assert db.query(Job).count() == 0
+    assert (
+        db.query(Job).filter(Job.employee_id.is_not(None)).count() == 0
+    )  # the booking's job stays unassigned
 
 
 def test_confirmation_rolls_back_when_job_creation_fails(
@@ -170,9 +164,9 @@ def test_confirmation_rolls_back_when_job_creation_fails(
         def check_assignment(self, session, request: AssignmentRequest) -> None:  # type: ignore[no-untyped-def]
             raise DependencyUnavailable("Scheduling service is unavailable.")
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     previous = get_scheduling_policy()
     set_scheduling_policy(ExplodingPolicy())
@@ -190,7 +184,9 @@ def test_confirmation_rolls_back_when_job_creation_fails(
 
     db.expire_all()
     assert db.get(Booking, booking.id).status is BookingStatus.PENDING
-    assert db.query(Job).count() == 0
+    assert (
+        db.query(Job).filter(Job.employee_id.is_not(None)).count() == 0
+    )  # the booking's job stays unassigned
 
     # And the booking is still confirmable once the dependency recovers.
     recovery = client.post(
@@ -213,9 +209,9 @@ def test_the_scheduling_policy_seam_is_actually_consulted(
             calls.append(request)
             super().check_assignment(session, request)
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     previous = get_scheduling_policy()
     set_scheduling_policy(RecordingPolicy())
@@ -237,14 +233,14 @@ def test_the_scheduling_policy_seam_is_actually_consulted(
 def test_assignable_employees_lists_only_active_qualified_staff(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     other = make_service(db, organization, name="Express Wash", duration_minutes=45)
     make_employee(db, organization, email="unqualified@example.com", services=[other])
     make_employee(
         db, organization, email="retired@example.com", services=[setup["service"]], active=False
     )
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.get(
         f"/api/v1/bookings/{booking.id}/assignable-employees",
@@ -258,9 +254,9 @@ def test_assignable_employees_lists_only_active_qualified_staff(
 def test_rejecting_a_booking_creates_no_job(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.post(
         f"/api/v1/bookings/{booking.id}/reject",
@@ -270,7 +266,7 @@ def test_rejecting_a_booking_creates_no_job(
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "REJECTED"
     assert response.json()["data"]["admin_notes"] == "Fully booked that day."
-    assert db.query(Job).count() == 0
+    assert db.query(Job).filter(Job.status != JobStatus.CANCELLED).count() == 0  # cancelled with it
 
 
 def test_rescheduling_moves_the_job_window_too(
@@ -278,9 +274,9 @@ def test_rescheduling_moves_the_job_window_too(
 ) -> None:
     from tests.conftest import future_start
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, admin)
     client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -309,9 +305,9 @@ def test_a_started_job_blocks_reschedule_and_cancel(
 ) -> None:
     from tests.conftest import future_start
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, admin)
     client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -338,9 +334,9 @@ def test_a_started_job_blocks_reschedule_and_cancel(
 def test_cancelling_a_confirmed_booking_cancels_its_job(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, admin)
     client.post(
         f"/api/v1/bookings/{booking.id}/confirm",

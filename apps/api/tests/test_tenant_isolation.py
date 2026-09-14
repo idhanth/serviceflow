@@ -13,7 +13,7 @@ from tests.conftest import auth_headers, make_organization, make_user
 def test_request_is_scoped_to_the_callers_organization(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     response = client.get("/api/v1/organizations/current", headers=auth_headers(client, admin))
     assert response.status_code == 200
     assert response.json()["data"]["id"] == str(organization.id)
@@ -22,23 +22,23 @@ def test_request_is_scoped_to_the_callers_organization(
 def test_foreign_organization_header_is_refused(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     other_org = make_organization(db, name="Rival Detailing")
-    make_user(db, other_org, role=Role.ADMIN)
+    make_user(db, other_org, role=Role.OWNER)
 
     headers = auth_headers(client, admin)
     headers["X-Organization-Id"] = str(other_org.id)
     response = client.get("/api/v1/organizations/current", headers=headers)
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert response.json()["error"]["code"] == "TENANT_ACCESS_DENIED"
 
 
 def test_unknown_and_foreign_organizations_are_indistinguishable(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """A 404 for one and a 403 for the other would leak which organizations exist."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     other_org = make_organization(db, name="Rival Detailing")
 
     foreign = client.get(
@@ -61,7 +61,7 @@ def test_unknown_and_foreign_organizations_are_indistinguishable(
 def test_malformed_organization_header_is_refused_not_crashed(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = {**auth_headers(client, admin), "X-Organization-Id": "not-a-uuid"}
     response = client.get("/api/v1/organizations/current", headers=headers)
     assert response.status_code == 403
@@ -73,13 +73,13 @@ def test_membership_in_two_organizations_requires_an_explicit_choice(
     from serviceflow.db.models.enums import MembershipStatus
     from serviceflow.db.models.membership import OrganizationMembership
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     second = make_organization(db, name="Second Shop")
     db.add(
         OrganizationMembership(
             organization_id=second.id,
             user_id=admin.id,
-            role=Role.ADMIN,
+            role=Role.OWNER,
             status=MembershipStatus.ACTIVE,
         )
     )

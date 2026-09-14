@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.enums import BookingStatus, Role
 from serviceflow.db.models.organization import Organization
 from serviceflow.services.bookings import booking_window
@@ -19,7 +18,6 @@ from tests.conftest import (
     make_customer,
     make_service,
     make_user,
-    make_vehicle,
 )
 
 
@@ -34,7 +32,6 @@ def test_end_time_is_derived_from_the_service_duration(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": start.isoformat(),
         },
@@ -59,7 +56,6 @@ def test_a_client_supplied_end_time_is_ignored(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": start.isoformat(),
             "requested_end": (start + timedelta(minutes=5)).isoformat(),
@@ -89,7 +85,7 @@ def timezone_plus_two():
     return timezone(timedelta(hours=2))
 
 
-def test_customer_books_with_their_own_vehicle(
+def test_customer_books_for_themselves(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     setup = booking_setup(db, organization)
@@ -97,7 +93,6 @@ def test_customer_books_with_their_own_vehicle(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
             "customer_notes": "Please focus on the wheels.",
@@ -111,27 +106,6 @@ def test_customer_books_with_their_own_vehicle(
     assert data["admin_notes"] is None
 
 
-def test_customer_cannot_book_another_customers_vehicle(
-    client: TestClient, db: Session, organization: Organization
-) -> None:
-    setup = booking_setup(db, organization)
-    stranger = make_customer(db, organization, email="stranger@example.com")
-    their_vehicle = make_vehicle(db, organization, stranger, make="Porsche", model="911")
-
-    response = client.post(
-        "/api/v1/bookings",
-        headers=auth_headers(client, setup["customer_user"]),
-        json={
-            "vehicle_id": str(their_vehicle.id),
-            "service_id": str(setup["service"].id),
-            "requested_start": future_start().isoformat(),
-        },
-    )
-    # Reported as unknown, not forbidden, so vehicle ids cannot be probed.
-    assert response.status_code == 404
-    assert db.query(Booking).count() == 0
-
-
 def test_customer_cannot_book_on_behalf_of_someone_else(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
@@ -143,7 +117,6 @@ def test_customer_cannot_book_on_behalf_of_someone_else(
         headers=auth_headers(client, setup["customer_user"]),
         json={
             "customer_id": str(stranger.id),
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -162,7 +135,6 @@ def test_a_retired_service_cannot_be_booked(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -171,24 +143,28 @@ def test_a_retired_service_cannot_be_booked(
     assert response.json()["error"]["details"]["fields"]["service_id"]
 
 
-def test_an_archived_vehicle_cannot_be_booked(
+def test_an_archived_customer_cannot_be_booked(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     setup = booking_setup(db, organization)
-    headers = auth_headers(client, setup["customer_user"])
-    client.delete(f"/api/v1/vehicles/{setup['vehicle'].id}", headers=headers)
+    owner = make_user(db, organization, role=Role.OWNER)
+    headers = auth_headers(client, owner)
+    assert (
+        client.delete(f"/api/v1/customers/{setup['customer'].id}", headers=headers).status_code
+        == 200
+    )
 
     response = client.post(
         "/api/v1/bookings",
         headers=headers,
         json={
-            "vehicle_id": str(setup["vehicle"].id),
+            "customer_id": str(setup["customer"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
     )
     assert response.status_code == 422
-    assert response.json()["error"]["details"]["fields"]["vehicle_id"]
+    assert response.json()["error"]["details"]["fields"]["customer_id"]
 
 
 def test_a_time_in_the_past_is_refused(
@@ -199,7 +175,6 @@ def test_a_time_in_the_past_is_refused(
         "/api/v1/bookings",
         headers=auth_headers(client, setup["customer_user"]),
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
         },
@@ -213,8 +188,7 @@ def test_customer_cannot_read_another_customers_booking(
 ) -> None:
     setup = booking_setup(db, organization)
     stranger = make_customer(db, organization, email="stranger@example.com")
-    stranger_vehicle = make_vehicle(db, organization, stranger)
-    theirs = make_booking(db, organization, stranger, stranger_vehicle, setup["service"])
+    theirs = make_booking(db, organization, stranger, setup["service"])
     headers = auth_headers(client, setup["customer_user"])
 
     assert client.get(f"/api/v1/bookings/{theirs.id}", headers=headers).status_code == 404
@@ -242,7 +216,7 @@ def test_customer_cancels_their_own_pending_booking(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     response = client.post(
         f"/api/v1/bookings/{booking.id}/cancel",
         headers=auth_headers(client, setup["customer_user"]),
@@ -256,7 +230,7 @@ def test_customers_cannot_confirm_or_reject(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, setup["customer_user"])
 
     assert (
@@ -282,9 +256,9 @@ def test_customers_cannot_confirm_or_reject(
 def test_admin_sees_internal_fields_and_all_bookings(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    make_booking(db, organization, setup["customer"], setup["service"])
 
     listing = client.get("/api/v1/bookings", headers=auth_headers(client, admin)).json()
     assert listing["meta"]["total"] == 1
@@ -294,14 +268,13 @@ def test_admin_sees_internal_fields_and_all_bookings(
 def test_timeframe_and_status_filters(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    make_booking(db, organization, setup["customer"], setup["service"])
     make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=datetime.now(UTC) - timedelta(days=5),
         status=BookingStatus.CONFIRMED,
@@ -325,12 +298,12 @@ def test_employees_have_no_booking_access(
 ) -> None:
     """PRD 6 gives employees jobs, not bookings - and the refusal should say so."""
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, setup["employee_user"])
 
     listing = client.get("/api/v1/bookings", headers=headers)
     assert listing.status_code == 403
-    assert listing.json()["error"]["code"] == "FORBIDDEN"
+    assert listing.json()["error"]["code"] == "INVALID_ROLE"
 
     detail = client.get(f"/api/v1/bookings/{booking.id}", headers=headers)
     assert detail.status_code == 403
@@ -344,12 +317,11 @@ def test_employees_have_no_booking_access(
             "/api/v1/bookings",
             headers=headers,
             json={
-                "vehicle_id": str(setup["vehicle"].id),
                 "service_id": str(setup["service"].id),
                 "requested_start": future_start().isoformat(),
             },
         ).status_code
-        == 404
+        == 403
     )
 
 
@@ -369,7 +341,6 @@ def test_a_job_finished_early_moves_the_booking_into_history(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=5),
         status=BookingStatus.CONFIRMED,
@@ -395,7 +366,7 @@ def test_upcoming_and_past_partition_every_booking(
     made: list[str] = []
 
     # One of every meaningful shape.
-    pending = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    pending = make_booking(db, organization, setup["customer"], setup["service"])
     made.append(str(pending.id))
     made.append(
         str(
@@ -403,7 +374,6 @@ def test_upcoming_and_past_partition_every_booking(
                 db,
                 organization,
                 setup["customer"],
-                setup["vehicle"],
                 setup["service"],
                 start=datetime.now(UTC) - timedelta(days=3),
                 status=BookingStatus.CONFIRMED,
@@ -416,7 +386,6 @@ def test_upcoming_and_past_partition_every_booking(
                 db,
                 organization,
                 setup["customer"],
-                setup["vehicle"],
                 setup["service"],
                 status=BookingStatus.REJECTED,
             ).id
@@ -428,7 +397,6 @@ def test_upcoming_and_past_partition_every_booking(
                 db,
                 organization,
                 setup["customer"],
-                setup["vehicle"],
                 setup["service"],
                 status=BookingStatus.CANCELLED,
             ).id
@@ -438,7 +406,6 @@ def test_upcoming_and_past_partition_every_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=future_start(days=6),
         status=BookingStatus.CONFIRMED,

@@ -8,7 +8,7 @@ from serviceflow.db.models.availability import (
 )
 from serviceflow.db.models.booking import Booking
 from serviceflow.db.models.customer import Customer
-from serviceflow.db.models.employee import Employee, employee_services
+from serviceflow.db.models.employee import Employee, EmployeeService
 from serviceflow.db.models.enums import (
     AuditAction,
     BookingStatus,
@@ -30,7 +30,6 @@ from serviceflow.db.models.notification import Notification
 from serviceflow.db.models.organization import Organization
 from serviceflow.db.models.service import Service
 from serviceflow.db.models.user import User
-from serviceflow.db.models.vehicle import Vehicle
 
 __all__ = [
     "AuditAction",
@@ -42,6 +41,7 @@ __all__ = [
     "Customer",
     "Employee",
     "EmployeeAvailability",
+    "EmployeeService",
     "IdempotencyRecord",
     "Job",
     "JobNote",
@@ -59,6 +59,4 @@ __all__ = [
     "Role",
     "Service",
     "User",
-    "Vehicle",
-    "employee_services",
 ]

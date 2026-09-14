@@ -17,11 +17,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from serviceflow.core.errors import ScheduleConflict, ValidationFailed
+from serviceflow.core.errors import InvalidSchedule, ScheduleConflict, ValidationFailed
 from serviceflow.db.models.availability import AvailabilityOverride, EmployeeAvailability
 from serviceflow.db.models.employee import Employee
 from serviceflow.db.models.organization import Organization
@@ -87,6 +88,20 @@ def date_overrides(db: Session, employee_id: uuid.UUID) -> dict[dt.date, DateOve
     }
 
 
+def conflict_message(name: str, start: datetime, end: datetime, timezone: str) -> str:
+    """ "Alex Morgan is already booked from 2:00 PM-3:00 PM. Choose ..." in the shop's time."""
+    tz = ZoneInfo(timezone)
+    local_start, local_end = start.astimezone(tz), end.astimezone(tz)
+    return (
+        f"{name} is already booked from {_clock(local_start)}–{_clock(local_end)}."  # noqa: RUF001
+        " Choose another employee or time."
+    )
+
+
+def _clock(moment: datetime) -> str:
+    return moment.strftime("%-I:%M %p")
+
+
 # --------------------------------------------------------------- policies
 
 
@@ -139,7 +154,7 @@ class AvailabilityPolicy(QualificationPolicy):
             overrides=date_overrides(db, employee.id),
         )
         if verdict.blocked:
-            raise ScheduleConflict(
+            raise InvalidSchedule(
                 f"{employee.user.full_name} isn't available then. {verdict.reason}",
                 details={"fields": {"employee_id": verdict.reason}},
             )
@@ -159,7 +174,12 @@ class AvailabilityPolicy(QualificationPolicy):
         if clashes:
             first = clashes[0]
             raise ScheduleConflict(
-                f"{employee.user.full_name} is already booked during that time.",
+                conflict_message(
+                    employee.user.full_name,
+                    first.scheduled_start,
+                    first.scheduled_end,
+                    organization_timezone(db, request.organization_id),
+                ),
                 details={
                     "fields": {"employee_id": "Already assigned during this window."},
                     "conflicting_job_id": str(first.id),

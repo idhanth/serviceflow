@@ -13,8 +13,9 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from serviceflow.api.deps import ActiveUser, DbSession, rate_limit
+from serviceflow.api.deps import DbSession, SignedInUser, rate_limit
 from serviceflow.auth.passwords import verify_password
+from serviceflow.auth.permissions import PLATFORM_ADMIN_PERMISSIONS, permissions_for
 from serviceflow.auth.provider import DevJWTAuthProvider
 from serviceflow.core.config import get_settings
 from serviceflow.core.errors import Unauthorized
@@ -43,12 +44,15 @@ def _session_user(user: User) -> SessionUser:
         last_name=user.last_name,
         full_name=user.full_name,
         avatar_url=user.avatar_url,
+        is_platform_admin=user.is_platform_admin,
+        platform_permissions=sorted(PLATFORM_ADMIN_PERMISSIONS) if user.is_platform_admin else [],
         memberships=[
             MembershipSummary(
                 organization_id=m.organization_id,
                 organization_name=m.organization.name,
                 organization_slug=m.organization.slug,
                 role=m.role,
+                permissions=sorted(permissions_for([m.role])),
             )
             for m in user.memberships
             if m.status is MembershipStatus.ACTIVE
@@ -93,7 +97,12 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> LoginRespon
 
 
 @router.get("/me", response_model=DataResponse[SessionUser], summary="Current session")
-def me(current_user: ActiveUser, db: DbSession) -> DataResponse[SessionUser]:
+def me(current_user: SignedInUser, db: DbSession) -> DataResponse[SessionUser]:
+    """Who is signed in, their memberships, and what each membership may do.
+
+    Works before a tenant is chosen, so a platform administrator - who holds no
+    membership - can load their session too.
+    """
     user = _load_user_with_memberships(db, user_id=current_user.user_id)
     if user is None:
         raise Unauthorized()
@@ -108,11 +117,7 @@ def me(current_user: ActiveUser, db: DbSession) -> DataResponse[SessionUser]:
     dependencies=[Depends(rate_limit("signup"))],
 )
 def signup(payload: SignupRequest, request: Request, db: DbSession) -> LoginResponse:
-    """Registers a customer and signs them straight in.
-
-    Not rate limited yet - that arrives with the rest of the abuse controls in
-    phase 7 (PRD 42).
-    """
+    """Registers a customer and signs them straight in. Rate limited by address."""
     provider = request.app.state.auth_provider
     if not isinstance(provider, DevJWTAuthProvider):
         raise Unauthorized("Sign-up is handled by the configured identity provider.")
@@ -137,3 +142,12 @@ def signup(payload: SignupRequest, request: Request, db: DbSession) -> LoginResp
         expires_in=settings.access_token_ttl_seconds,
         user=_session_user(loaded),
     )
+
+
+me_router = APIRouter(tags=["auth"])
+
+
+@me_router.get("/me", response_model=DataResponse[SessionUser], summary="Current session")
+def me_alias(current_user: SignedInUser, db: DbSession) -> DataResponse[SessionUser]:
+    """Same as /auth/me."""
+    return me(current_user, db)

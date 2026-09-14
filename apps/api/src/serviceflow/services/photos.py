@@ -24,7 +24,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from serviceflow.core.errors import Forbidden, NotFound, UploadFailed, ValidationFailed
+from serviceflow.auth.permissions import Permission as P
+from serviceflow.auth.permissions import can
+from serviceflow.core.errors import InvalidRole, NotFound, UploadFailed, ValidationFailed
 from serviceflow.db.models.enums import AuditAction, JobStatus, PhotoType, Role
 from serviceflow.db.models.job_photo import MAX_PHOTO_BYTES, MAX_PHOTOS_PER_JOB, JobPhoto
 from serviceflow.services import audit
@@ -34,9 +36,9 @@ from serviceflow.services.storage import ALLOWED_MIME_TYPES, PresignedUpload, ge
 logger = logging.getLogger(__name__)
 
 # Photos may be added while there is still work to record against.
-UPLOADABLE_STATES = frozenset({JobStatus.ASSIGNED, JobStatus.IN_PROGRESS, JobStatus.COMPLETED})
+UPLOADABLE_STATES = frozenset({JobStatus.SCHEDULED, JobStatus.IN_PROGRESS, JobStatus.COMPLETED})
 # Once the job is closed out, the record is fixed.
-DELETABLE_STATES = frozenset({JobStatus.ASSIGNED, JobStatus.IN_PROGRESS})
+DELETABLE_STATES = frozenset({JobStatus.SCHEDULED, JobStatus.IN_PROGRESS})
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +54,7 @@ def _require_staff(db: Session, organization_id: uuid.UUID, job_id: uuid.UUID, *
         db, organization_id, job_id, roles=roles, user_id=user_id
     )
     if audience is not JobAudience.STAFF:
-        raise Forbidden("Only the team can change a job's photos.")
+        raise InvalidRole("Only the team can change a job's photos.")
     return job
 
 
@@ -73,7 +75,7 @@ def list_photos(
     """Every photo on the job, for staff and for its own customer alike.
 
     JobPhoto has no visibility column: a job's photos are the record of work on
-    that customer's vehicle, so its customer may see all of them (docs/adr-0005).
+    that customer's property, so its customer may see all of them (docs/adr-0005).
     Anything not for the customer belongs in an INTERNAL note.
     """
     resolve_job_for_viewer(db, organization_id, job_id, roles=roles, user_id=user_id)
@@ -229,7 +231,7 @@ def delete_photo(
         raise NotFound("We couldn't find that photo.")
 
     job = _require_staff(db, organization_id, photo.job_id, roles=roles, user_id=user_id)
-    if job.status not in DELETABLE_STATES and Role.ADMIN not in roles:
+    if job.status not in DELETABLE_STATES and not can(roles, P.JOBS_DISPATCH):
         raise ValidationFailed(
             "This job is closed out, so its photos can't be removed.",
             details={"fields": {"job": "Job is complete."}},

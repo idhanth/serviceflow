@@ -91,7 +91,6 @@ def test_simultaneous_bookings_from_one_customer_stop_at_the_limit(
                 "/api/v1/bookings",
                 headers=headers,
                 json={
-                    "vehicle_id": str(setup["vehicle"].id),
                     "service_id": str(setup["service"].id),
                     "requested_start": future_start(days=3 + index).isoformat(),
                 },
@@ -127,7 +126,6 @@ def test_two_customers_under_load_keep_their_own_budgets(
                     "/api/v1/bookings",
                     headers=heavy_headers,
                     json={
-                        "vehicle_id": str(heavy["vehicle"].id),
                         "service_id": str(heavy["service"].id),
                         "requested_start": future_start(days=3 + index).isoformat(),
                     },
@@ -142,7 +140,6 @@ def test_two_customers_under_load_keep_their_own_budgets(
         "/api/v1/bookings",
         headers=auth_headers(client, quiet["customer_user"]),
         json={
-            "vehicle_id": str(quiet["vehicle"].id),
             "service_id": str(quiet["service"].id),
             "requested_start": future_start(days=2).isoformat(),
         },
@@ -155,7 +152,7 @@ def test_categories_under_load_do_not_share_a_counter(
     client: TestClient, db: Session, organization: Organization, attempt: int
 ) -> None:
     """Exhausting one limiter must leave the others untouched."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     allowed = LIMITS["search"].max_requests
 

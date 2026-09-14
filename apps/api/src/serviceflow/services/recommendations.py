@@ -17,11 +17,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from serviceflow.db.models.employee import Employee
-from serviceflow.db.models.enums import JobStatus
 from serviceflow.db.models.job import Job
 from serviceflow.db.models.service import Service
 from serviceflow.services.availability import evaluate_window
-from serviceflow.services.conflicts import overlapping_jobs
+from serviceflow.services.conflicts import TIME_HOLDING_STATUSES, overlapping_jobs
 from serviceflow.services.scheduling import date_overrides, organization_timezone, weekly_windows
 
 
@@ -86,7 +85,8 @@ def _workload(
         select(Job.employee_id, func.count(), minutes)
         .where(
             Job.organization_id == organization_id,
-            Job.status != JobStatus.CANCELLED,
+            Job.employee_id.is_not(None),
+            Job.status.in_(TIME_HOLDING_STATUSES),
             Job.scheduled_start >= day_start,
             Job.scheduled_start < day_end,
         )

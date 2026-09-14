@@ -32,7 +32,6 @@ def rival(db: Session) -> dict:
         db,
         org,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )
@@ -43,7 +42,7 @@ def rival(db: Session) -> dict:
 def test_a_foreign_booking_is_not_readable_or_mutable(
     client: TestClient, db: Session, organization: Organization, rival: dict
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     booking_id = rival["booking"].id
 
@@ -87,7 +86,7 @@ def test_a_foreign_booking_is_not_readable_or_mutable(
 def test_a_foreign_job_is_not_readable_or_mutable(
     client: TestClient, db: Session, organization: Organization, rival: dict
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     job_id = rival["job"].id
 
@@ -100,14 +99,14 @@ def test_a_foreign_job_is_not_readable_or_mutable(
 
     db.expire_all()
     stored = db.get(Job, job_id)
-    assert stored.status.value == "ASSIGNED"
+    assert stored.status.value == "SCHEDULED"
     assert stored.started_at is None
 
 
 def test_foreign_ids_are_indistinguishable_from_nonexistent_ones(
     client: TestClient, db: Session, organization: Organization, rival: dict
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     missing = uuid.uuid4()
 
@@ -125,9 +124,9 @@ def test_foreign_ids_are_indistinguishable_from_nonexistent_ones(
 def test_listings_never_include_another_organizations_rows(
     client: TestClient, db: Session, organization: Organization, rival: dict
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    make_booking(db, organization, setup["customer"], setup["service"])
     headers = auth_headers(client, admin)
 
     bookings = client.get("/api/v1/bookings?page_size=100", headers=headers).json()
@@ -135,15 +134,16 @@ def test_listings_never_include_another_organizations_rows(
     assert str(rival["booking"].id) not in {row["id"] for row in bookings["data"]}
 
     jobs = client.get("/api/v1/jobs?page_size=100", headers=headers).json()
-    assert jobs["meta"]["total"] == 0
+    assert jobs["meta"]["total"] == 1  # our booking's own job, still unassigned
+    assert str(rival["job"].id) not in {row["id"] for row in jobs["data"]}
 
 
 def test_a_foreign_employee_cannot_be_assigned_to_a_local_booking(
     client: TestClient, db: Session, organization: Organization, rival: dict
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
-    booking = make_booking(db, organization, setup["customer"], setup["vehicle"], setup["service"])
+    booking = make_booking(db, organization, setup["customer"], setup["service"])
 
     response = client.post(
         f"/api/v1/bookings/{booking.id}/confirm",
@@ -154,21 +154,27 @@ def test_a_foreign_employee_cannot_be_assigned_to_a_local_booking(
 
     db.expire_all()
     assert db.get(Booking, booking.id).status is BookingStatus.PENDING
-    assert db.query(Job).filter_by(organization_id=organization.id).count() == 0
+    assert (
+        db.query(Job)
+        .filter_by(organization_id=organization.id)
+        .filter(Job.employee_id.is_not(None))
+        .count()
+        == 0
+    )
 
 
-def test_a_foreign_vehicle_or_service_cannot_be_booked_locally(
+def test_a_foreign_technician_or_service_cannot_be_booked_locally(
     client: TestClient, db: Session, organization: Organization, rival: dict
 ) -> None:
     setup = booking_setup(db, organization)
     headers = auth_headers(client, setup["customer_user"])
 
-    foreign_vehicle = client.post(
+    foreign_employee = client.post(
         "/api/v1/bookings",
         headers=headers,
         json={
-            "vehicle_id": str(rival["setup"]["vehicle"].id),
             "service_id": str(setup["service"].id),
+            "employee_id": str(rival["setup"]["employee"].id),
             "requested_start": future_start().isoformat(),
         },
     )
@@ -176,12 +182,11 @@ def test_a_foreign_vehicle_or_service_cannot_be_booked_locally(
         "/api/v1/bookings",
         headers=headers,
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(rival["setup"]["service"].id),
             "requested_start": future_start().isoformat(),
         },
     )
-    assert foreign_vehicle.status_code == 404
+    assert foreign_employee.status_code == 404
     assert foreign_service.status_code == 404
     assert db.query(Booking).filter_by(organization_id=organization.id).count() == 0
 
@@ -191,14 +196,13 @@ def test_the_rivals_own_admin_cannot_reach_our_records(
 ) -> None:
     """Isolation is mutual, not just one-directional."""
     rival_admin = make_user(
-        db, rival["organization"], role=Role.ADMIN, email="rival-admin@example.com"
+        db, rival["organization"], role=Role.OWNER, email="rival-admin@example.com"
     )
     setup = booking_setup(db, organization)
     ours = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         status=BookingStatus.CONFIRMED,
     )

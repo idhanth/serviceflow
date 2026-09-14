@@ -46,13 +46,12 @@ def _confirmed_at(
     setup: dict,
     start: dt.datetime,
     *,
-    status=JobStatus.ASSIGNED,
+    status=JobStatus.SCHEDULED,
 ):  # type: ignore[no-untyped-def]
     booking = make_booking(
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=start,
         status=BookingStatus.CONFIRMED,
@@ -138,7 +137,6 @@ def test_a_rejected_booking_is_not_reminded(db: Session, organization: Organizat
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=dt.datetime.now(dt.UTC) + dt.timedelta(hours=LEAD_HOURS),
         status=BookingStatus.REJECTED,
@@ -153,7 +151,6 @@ def test_a_pending_booking_is_not_reminded(db: Session, organization: Organizati
         db,
         organization,
         setup["customer"],
-        setup["vehicle"],
         setup["service"],
         start=dt.datetime.now(dt.UTC) + dt.timedelta(hours=LEAD_HOURS),
     )

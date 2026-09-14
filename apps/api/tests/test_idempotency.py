@@ -36,7 +36,6 @@ KEY = "booking-attempt-01HZY7Q2"
 
 def body(setup: dict, **overrides) -> dict:  # type: ignore[no-untyped-def]
     payload = {
-        "vehicle_id": str(setup["vehicle"].id),
         "service_id": str(setup["service"].id),
         "requested_start": future_start().isoformat(),
     }
@@ -89,7 +88,7 @@ def test_a_replay_does_not_repeat_side_effects(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
     """A retry must not notify the customer twice or double the audit trail."""
-    make_user(db, organization, role=Role.ADMIN)
+    make_user(db, organization, role=Role.OWNER)
     setup = booking_setup(db, organization)
     headers = auth_headers(client, setup["customer_user"])
     payload = body(setup)
@@ -127,8 +126,12 @@ def test_a_request_without_a_key_is_unaffected(
     headers = auth_headers(client, setup["customer_user"])
 
     assert post(client, headers, body(setup), key=None).status_code == 201
-    assert post(client, headers, body(setup), key=None).status_code == 201
-    assert db.query(Booking).count() == 2
+    # Without a key there is nothing to replay, but an identical second booking
+    # is still refused - by the database's no-duplicate index, not by the key.
+    again = post(client, headers, body(setup), key=None)
+    assert again.status_code == 409
+    assert again.json()["error"]["details"]["reason"] == "DUPLICATE_BOOKING"
+    assert db.query(Booking).count() == 1
     assert db.query(IdempotencyRecord).count() == 0
 
 

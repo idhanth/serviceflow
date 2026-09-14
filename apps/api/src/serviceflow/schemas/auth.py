@@ -19,6 +19,9 @@ class MembershipSummary(BaseModel):
     organization_name: str
     organization_slug: str
     role: Role
+    # What this role may do here. The frontend shapes navigation and buttons from
+    # this list; the API still authorizes every request on its own.
+    permissions: list[str] = []
 
 
 class SessionUser(BaseModel):
@@ -28,6 +31,8 @@ class SessionUser(BaseModel):
     last_name: str
     full_name: str
     avatar_url: str | None = None
+    is_platform_admin: bool = False
+    platform_permissions: list[str] = []
     memberships: list[MembershipSummary]
 
 

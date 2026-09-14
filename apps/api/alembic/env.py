@@ -40,6 +40,10 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Migrations move rows across every tenant, so row level security is
+        # bypassed for this connection only (see serviceflow/db/tenancy.py).
+        connection.exec_driver_sql("SELECT set_config('app.rls_bypass', 'on', false)")
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

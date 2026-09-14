@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,17 +26,17 @@ class JobNote(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
 
     __tablename__ = "job_notes"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "job_id"],
+            ["jobs.organization_id", "jobs.id"],
+            ondelete="CASCADE",
+        ),
         CheckConstraint("length(btrim(content)) > 0", name="content_not_blank"),
         Index("ix_job_notes_job_id_created_at", "job_id", "created_at"),
         Index("ix_job_notes_job_id_visibility", "job_id", "visibility"),
     )
 
-    job_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    job_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     # RESTRICT: a note must always be attributable to whoever wrote it.
     author_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -49,7 +49,11 @@ class JobNote(UUIDPrimaryKey, OrganizationScoped, Timestamps, Base):
         SAEnum(NoteVisibility, name="note_visibility", native_enum=True), nullable=False
     )
 
-    job: Mapped[Job] = relationship(back_populates="notes")
+    job: Mapped[Job] = relationship(
+        back_populates="notes",
+        primaryjoin="JobNote.job_id == Job.id",
+        foreign_keys="JobNote.job_id",
+    )
     author: Mapped[User] = relationship(lazy="joined")
 
     @property

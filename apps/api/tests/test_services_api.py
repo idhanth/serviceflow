@@ -13,7 +13,7 @@ from tests.conftest import auth_headers, make_customer, make_service, make_user
 def test_admin_creates_a_service(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     response = client.post(
         "/api/v1/services",
         headers=auth_headers(client, admin),
@@ -34,7 +34,7 @@ def test_admin_creates_a_service(
 def test_duplicate_service_name_is_rejected_per_organization(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_service(db, organization, name="Full Detail")
 
     response = client.post(
@@ -93,7 +93,7 @@ def test_customers_only_see_active_services(
 def test_delete_deactivates_rather_than_destroying(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     service = make_service(db, organization)
     headers = auth_headers(client, admin)
 
@@ -106,7 +106,7 @@ def test_delete_deactivates_rather_than_destroying(
 
 
 def test_search_and_pagination(client: TestClient, db: Session, organization: Organization) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     for name in ["Express Wash", "Interior Detail", "Exterior Detail", "Full Detail"]:
         make_service(db, organization, name=name)
     headers = auth_headers(client, admin)
@@ -122,7 +122,7 @@ def test_search_and_pagination(client: TestClient, db: Session, organization: Or
 def test_search_wildcards_are_escaped(
     client: TestClient, db: Session, organization: Organization
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     make_service(db, organization, name="Express Wash")
     headers = auth_headers(client, admin)
 

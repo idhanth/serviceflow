@@ -121,7 +121,7 @@ def test_an_authenticated_request_logs_who_made_it(
     client: TestClient, db: Session, organization: Organization, logs: CapturingHandler
 ) -> None:
     """The regression that motivated the ASGI rewrite: these were always null."""
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     logs.lines.clear()
 
@@ -144,7 +144,7 @@ def test_an_unauthenticated_request_logs_no_actor(
 def test_context_does_not_leak_between_requests(
     client: TestClient, db: Session, organization: Organization, logs: CapturingHandler
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     client.get("/api/v1/customers", headers=auth_headers(client, admin))
     logs.lines.clear()
 
@@ -161,7 +161,7 @@ def test_an_internal_error_is_logged_with_context_and_hidden_from_the_client(
 ) -> None:
     from serviceflow.services import customers as customer_service
 
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
 
     def explode(*args: Any, **kwargs: Any) -> None:
@@ -196,7 +196,7 @@ def test_an_internal_error_is_logged_with_context_and_hidden_from_the_client(
 def test_a_failed_login_logs_no_password(
     client: TestClient, db: Session, organization: Organization, logs: CapturingHandler
 ) -> None:
-    user = make_user(db, organization, role=Role.ADMIN)
+    user = make_user(db, organization, role=Role.OWNER)
     logs.lines.clear()
 
     client.post(
@@ -210,7 +210,7 @@ def test_a_failed_login_logs_no_password(
 def test_a_session_cookie_never_reaches_the_log(
     client: TestClient, db: Session, organization: Organization, logs: CapturingHandler
 ) -> None:
-    admin = make_user(db, organization, role=Role.ADMIN)
+    admin = make_user(db, organization, role=Role.OWNER)
     headers = auth_headers(client, admin)
     token = headers["Authorization"].split(" ", 1)[1]
     logs.lines.clear()
@@ -232,7 +232,6 @@ def test_a_scheduling_conflict_is_logged_as_a_business_outcome(
         "/api/v1/bookings",
         headers=headers,
         json={
-            "vehicle_id": str(setup["vehicle"].id),
             "service_id": str(setup["service"].id),
             "requested_start": future_start().isoformat(),
         },
@@ -302,7 +301,6 @@ def test_an_idempotency_conflict_is_logged_without_the_payload(
     setup = booking_setup(db, organization)
     headers = {**auth_headers(client, setup["customer_user"]), "Idempotency-Key": "log-conflict-1"}
     payload = {
-        "vehicle_id": str(setup["vehicle"].id),
         "service_id": str(setup["service"].id),
         "requested_start": future_start().isoformat(),
     }
@@ -317,7 +315,7 @@ def test_an_idempotency_conflict_is_logged_without_the_payload(
     assert logs.named("serviceflow.access")[-1]["status"] == 409
     # The fingerprint is an implementation detail; the request body is private.
     assert "request_fingerprint" not in logs.text
-    assert str(setup["vehicle"].id) not in logs.text
+    assert conflicting["requested_start"] not in logs.text
 
 
 def test_a_validation_failure_does_not_echo_the_rejected_secret(
