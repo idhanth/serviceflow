@@ -1,0 +1,7 @@
+# The benchmark scripts are standalone tools, linted with the API's rules.
+# Long SQL and report strings are left whole rather than split mid-statement.
+extend = "../apps/api/pyproject.toml"
+line-length = 120
+
+[lint]
+extend-ignore = ["E501"]

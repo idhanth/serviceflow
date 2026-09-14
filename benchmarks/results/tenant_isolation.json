@@ -1,0 +1,157 @@
+{
+  "benchmark": "tenant_isolation",
+  "generated_at": "2026-09-14T19:22:12+00:00",
+  "git_commit": "cc5cc65",
+  "passed": true,
+  "summary": {
+    "attempted": 3057,
+    "blocked": 3057,
+    "unexpected_successes": 0,
+    "server_errors": 0,
+    "block_rate": 1.0
+  },
+  "categories": {
+    "exact_duplicate_booking": {
+      "description": "The same customer, service and start submitted again.",
+      "attempted": 288,
+      "blocked": 288,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "BOOKING_CONFLICT": 288
+      },
+      "examples_of_failures": []
+    },
+    "overlapping_employee_booking": {
+      "description": "A technician booked into time they already hold.",
+      "attempted": 576,
+      "blocked": 576,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "BOOKING_CONFLICT": 576
+      },
+      "examples_of_failures": []
+    },
+    "concurrent_double_booking": {
+      "description": "Simultaneous requests racing for one technician's slot (losers only).",
+      "attempted": 224,
+      "blocked": 224,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "BOOKING_CONFLICT": 224
+      },
+      "examples_of_failures": []
+    },
+    "cross_tenant_customer": {
+      "description": "A booking naming another tenant's customer.",
+      "attempted": 192,
+      "blocked": 192,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "NOT_FOUND": 192
+      },
+      "examples_of_failures": []
+    },
+    "cross_tenant_employee": {
+      "description": "A booking or assignment naming another tenant's technician.",
+      "attempted": 192,
+      "blocked": 192,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "NOT_FOUND": 192
+      },
+      "examples_of_failures": []
+    },
+    "cross_tenant_service": {
+      "description": "A booking naming another tenant's service.",
+      "attempted": 192,
+      "blocked": 192,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "NOT_FOUND": 192
+      },
+      "examples_of_failures": []
+    },
+    "cross_tenant_resource_access": {
+      "description": "Reading or changing another tenant's bookings, jobs or customers by id.",
+      "attempted": 520,
+      "blocked": 520,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "NOT_FOUND": 504,
+        "TENANT_ACCESS_DENIED": 16
+      },
+      "examples_of_failures": []
+    },
+    "unauthorized_role": {
+      "description": "An action the caller's role does not grant.",
+      "attempted": 393,
+      "blocked": 393,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "INVALID_ROLE": 324,
+        "NOT_FOUND": 69
+      },
+      "examples_of_failures": []
+    },
+    "database_level_bypass": {
+      "description": "Raw SQL writes that skip the application entirely.",
+      "attempted": 480,
+      "blocked": 480,
+      "unexpected_successes": 0,
+      "server_errors": 0,
+      "refusals": {
+        "fk_bookings_organization_id_customers": 80,
+        "fk_bookings_organization_id_services": 80,
+        "uq_bookings_no_duplicate_open": 80,
+        "fk_jobs_organization_id_employees": 80,
+        "jobs_no_overlapping_assignments": 80,
+        "InsufficientPrivilege": 80
+      },
+      "examples_of_failures": []
+    }
+  },
+  "controls": {
+    "succeeded": {
+      "anchor_booking_created": 96,
+      "race_winner": 32
+    },
+    "failed": {},
+    "note": "Legitimate writes that must succeed, so a system that refused everything could not pass."
+  },
+  "database_invariants_violations": {
+    "overlapping_live_jobs_for_one_technician": 0,
+    "bookings_referencing_another_tenants_customer_or_service": 0,
+    "jobs_assigned_to_another_tenants_technician": 0,
+    "duplicate_open_bookings": 0,
+    "bookings_without_exactly_one_job": 0,
+    "cross_tenant_notes_written": 0,
+    "customers_renamed_cross_tenant": 0
+  },
+  "configuration": {
+    "tenants": 4,
+    "technicians_per_tenant": 4,
+    "customers_per_tenant": 6,
+    "anchor_slots_per_technician": 6,
+    "cross_tenant_access_sample": 12,
+    "race_rounds_per_tenant": 8,
+    "race_size": 8,
+    "client_concurrency": 16,
+    "seed": 20260914
+  },
+  "environment": {
+    "postgres_version": "16.15",
+    "python": "3.12.13",
+    "os": "Darwin 25.5.0",
+    "machine": "arm64",
+    "cpu_count": 10
+  },
+  "duration_seconds": 9.4
+}
