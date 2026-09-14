@@ -23,17 +23,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { useResourceMutation } from "@/hooks/use-resource";
 import { apiFetch, ApiError, apiFetchData } from "@/lib/api-client";
 import { formatDuration, formatPrice, formatWindow } from "@/lib/format";
-import { queryKeys } from "@/lib/query-keys";
+import { OPERATIONS_KEYS, queryKeys } from "@/lib/query-keys";
 import type { AssignableEmployee, Booking } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function BookingReviewSheet({
   booking,
   timeZone,
+  canWrite,
   onOpenChange,
 }: {
   booking: Booking | null;
   timeZone: string;
+  canWrite: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const [employeeId, setEmployeeId] = useState<string | null>(null);
@@ -57,10 +59,10 @@ export function BookingReviewSheet({
     queryKey: queryKeys.bookings.assignable(booking?.id ?? "none"),
     queryFn: () =>
       apiFetch<{ data: AssignableEmployee[] }>(`bookings/${booking!.id}/assignable-employees`),
-    enabled: Boolean(booking) && booking?.status === "PENDING",
+    enabled: canWrite && Boolean(booking) && booking?.status === "PENDING",
   });
 
-  const invalidate = [queryKeys.bookings.all, queryKeys.jobs.all];
+  const invalidate = OPERATIONS_KEYS;
 
   const confirm = useResourceMutation<string, Booking>(
     (chosen) =>
@@ -118,9 +120,11 @@ export function BookingReviewSheet({
     }
   }
 
-  const isPending = booking?.status === "PENDING";
-  const canCancel = booking?.status === "PENDING" || booking?.status === "CONFIRMED";
-  const jobStarted = Boolean(booking?.job && booking.job.status !== "ASSIGNED");
+  const isPending = canWrite && booking?.status === "PENDING";
+  const canCancel = canWrite && (booking?.status === "PENDING" || booking?.status === "CONFIRMED");
+  const jobStarted = Boolean(
+    booking?.job && (booking.job.status === "IN_PROGRESS" || booking.job.status === "COMPLETED"),
+  );
 
   return (
     <>
@@ -141,7 +145,7 @@ export function BookingReviewSheet({
               <div className="space-y-5 px-4 pb-8">
                 {/* Facts first, as a definition list. Two aligned columns with
                     real gaps - the previous grid let the customer's email run
-                    into the vehicle's plate. */}
+                    into the address. */}
                 <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
                   <div className="min-w-0 space-y-1">
                     <dt className="text-[12px] text-muted-foreground">Customer</dt>
@@ -171,14 +175,9 @@ export function BookingReviewSheet({
                   </div>
 
                   <div className="min-w-0 space-y-1">
-                    <dt className="text-[12px] text-muted-foreground">Vehicle</dt>
-                    <dd className="space-y-0.5">
-                      <p className="text-[13px] font-medium">{booking.vehicle.display_name}</p>
-                      <p className="text-[13px] text-muted-foreground">
-                        {[booking.vehicle.color, booking.vehicle.license_plate]
-                          .filter(Boolean)
-                          .join(" · ") || "No colour or plate on file"}
-                      </p>
+                    <dt className="text-[12px] text-muted-foreground">Service address</dt>
+                    <dd className="text-[13px] font-medium">
+                      {booking.customer?.address ?? "No address on file"}
                     </dd>
                   </div>
 
@@ -208,7 +207,7 @@ export function BookingReviewSheet({
                   </section>
                 ) : null}
 
-                {booking.job ? (
+                {booking.job?.employee_name ? (
                   <section className="space-y-1.5">
                     <h3 className="text-[13px] font-medium">Assigned</h3>
                     <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2.5">
@@ -342,6 +341,7 @@ export function BookingReviewSheet({
                   </section>
                 ) : null}
 
+                {canWrite ? (
                 <section className="space-y-2">
                   <Label htmlFor="admin-notes">Internal notes</Label>
                   <Textarea
@@ -353,8 +353,16 @@ export function BookingReviewSheet({
                     placeholder="Only your team sees this."
                   />
                 </section>
+                ) : booking.admin_notes ? (
+                  <section className="space-y-1.5">
+                    <h3 className="text-[13px] font-medium">Internal notes</h3>
+                    <p className="whitespace-pre-wrap border-l-2 border-border pl-3 text-[13px] text-muted-foreground">
+                      {booking.admin_notes}
+                    </p>
+                  </section>
+                ) : null}
 
-                {booking.status === "CONFIRMED" && !jobStarted ? (
+                {canWrite && booking.status === "CONFIRMED" && !jobStarted ? (
                   <section className="space-y-2">
                     <Label htmlFor="reschedule-slot">Move to a new time</Label>
                     <div className="flex flex-col gap-2 sm:flex-row">
@@ -416,6 +424,12 @@ export function BookingReviewSheet({
                     </Button>
                   ) : null}
                 </div>
+
+                {!canWrite ? (
+                  <p className="rounded-md border bg-muted/30 p-2.5 text-[12px] text-muted-foreground">
+                    You have read-only access to bookings.
+                  </p>
+                ) : null}
 
                 {jobStarted ? (
                   <p className="text-sm text-muted-foreground">

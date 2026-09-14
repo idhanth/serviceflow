@@ -1,4 +1,5 @@
-import { requireRole } from "@/lib/session-context";
+import { can } from "@/lib/permissions";
+import { requirePermission } from "@/lib/session-context";
 import { serverFetchData } from "@/lib/server-api";
 import type { Employee } from "@/lib/types";
 
@@ -7,12 +8,11 @@ import { AvailabilityClient } from "./availability-client";
 export const metadata = { title: "Availability · ServiceFlow" };
 
 export default async function AvailabilityPage() {
-  const { roles } = await requireRole("ADMIN", "EMPLOYEE");
-  const isAdmin = roles.includes("ADMIN");
+  const { access } = await requirePermission("availability:manage", "availability:own");
+  const manager = can(access, "availability:manage");
 
-  // An admin may also be an employee; either way we only need their own id when
-  // they are not an admin, and a missing profile is handled in the client.
-  const own = isAdmin ? null : await serverFetchData<Employee>("employees/me");
+  // A technician edits their own hours; anyone who manages the team picks whose.
+  const own = manager ? null : await serverFetchData<Employee>("employees/me");
 
-  return <AvailabilityClient isAdmin={isAdmin} ownEmployeeId={own?.id ?? null} />;
+  return <AvailabilityClient isAdmin={manager} ownEmployeeId={own?.id ?? null} />;
 }

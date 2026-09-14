@@ -1,28 +1,32 @@
 "use client";
 
-import { ArrowLeft, Car, Check, Clock, Loader2, Sparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertCircle, ArrowLeft, Check, Clock, Loader2, Tags, UserRound, Users } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { FieldSelect } from "@/components/data/field-select";
+import { SearchInput } from "@/components/data/search-input";
 import { CardSkeletons, EmptyState, ErrorState } from "@/components/data/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { usePagedResource, useResourceMutation } from "@/hooks/use-resource";
-import { apiFetchData, newIdempotencyKey } from "@/lib/api-client";
-import { formatDuration, formatPrice, formatTime } from "@/lib/format";
-import { queryKeys } from "@/lib/query-keys";
-import type { Booking, Service, Vehicle } from "@/lib/types";
+import { errorMessage, usePagedResource, useResourceMutation } from "@/hooks/use-resource";
+import { apiFetch, ApiError, apiFetchData, newIdempotencyKey } from "@/lib/api-client";
+import { minutesToLabel, todayIn, zonedTimeToIso } from "@/lib/dates";
+import { formatDuration, formatPrice, formatTime, formatWindow } from "@/lib/format";
+import { OPERATIONS_KEYS, queryKeys } from "@/lib/query-keys";
+import type { AssignableEmployee, Booking, Customer, Service } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Service", "Vehicle", "Date & time", "Review"] as const;
+type Step = "customer" | "service" | "time" | "review";
 
-/** Local datetime string ("2026-09-05T10:00") -> an ISO string with this browser's offset. */
-function toIsoWithOffset(local: string): string {
-  return new Date(local).toISOString();
-}
+/** Half-hour starts across a working day, in the business's timezone. */
+const TIMES = Array.from({ length: 23 }, (_, index) => 7 * 60 + index * 30);
 
 /** A short, stable stamp of the payload. Only has to change when the payload does. */
 function fingerprint(value: string): string {
@@ -34,61 +38,117 @@ function fingerprint(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function minimumSlot(): string {
-  const soonest = new Date(Date.now() + 60 * 60 * 1000);
-  soonest.setMinutes(soonest.getMinutes() - soonest.getTimezoneOffset());
-  return soonest.toISOString().slice(0, 16);
+function Choice({
+  selected,
+  onSelect,
+  children,
+  className,
+  disabled,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  children: React.ReactNode;
+  className?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={cn(
+        "focus-ring rounded-lg border bg-surface p-3.5 text-left transition-colors duration-75",
+        "hover:border-accent-solid/40 hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60",
+        selected && "border-accent-solid/60 bg-accent-solid/[0.05]",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
 }
 
-export function BookingWizard() {
+/**
+ * Creating a booking, one decision at a time.
+ *
+ *   staff:     customer -> service -> time and technician -> review
+ *   customer:  service -> time and technician -> review
+ *
+ * The technician list is asked for the exact slot being considered, so who is
+ * free - and why the others aren't - is shown before submitting rather than
+ * discovered from a refusal. The server still decides: if someone else takes
+ * the slot in the meantime, its conflict message is shown here, in words, with
+ * a way back to choose again.
+ */
+export function BookingWizard({
+  timeZone,
+  staff,
+  initialCustomerId,
+}: {
+  timeZone: string;
+  staff: boolean;
+  initialCustomerId: string | null;
+}) {
   const router = useRouter();
-  const [step, setStep] = useState(0);
-  const [serviceId, setServiceId] = useState<string | null>(null);
-  const [vehicleId, setVehicleId] = useState<string | null>(null);
-  const [slot, setSlot] = useState("");
+  const steps: Step[] = staff ? ["customer", "service", "time", "review"] : ["service", "time", "review"];
+  const labels: Record<Step, string> = {
+    customer: "Customer",
+    service: "Service",
+    time: "Time & technician",
+    review: "Review",
+  };
+
+  const [step, setStep] = useState<Step>(staff && !initialCustomerId ? "customer" : "service");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [service, setService] = useState<Service | null>(null);
+  const [date, setDate] = useState(() => todayIn(timeZone));
+  const [time, setTime] = useState<number | null>(null);
+  const [employeeId, setEmployeeId] = useState<string>("");
   const [notes, setNotes] = useState("");
-  const [slotError, setSlotError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<string | null>(null);
 
+  const initialCustomer = useQuery<Customer, ApiError>({
+    queryKey: queryKeys.customers.detail(initialCustomerId ?? "none"),
+    queryFn: () => apiFetchData<Customer>(`customers/${initialCustomerId}`),
+    enabled: staff && Boolean(initialCustomerId) && customer === null,
+  });
+  const chosenCustomer = customer ?? initialCustomer.data ?? null;
+
+  const customerParams = { q: customerQuery, page_size: 8 };
+  const customers = usePagedResource<Customer>(queryKeys.customers.list(customerParams), "customers", customerParams, {
+    enabled: staff && step === "customer",
+  });
   const serviceParams = { active: true, page_size: 50 };
-  const services = usePagedResource<Service>(
-    queryKeys.services.list(serviceParams),
-    "services",
-    serviceParams,
-  );
-  const vehicleParams = { page_size: 50 };
-  const vehicles = usePagedResource<Vehicle>(
-    queryKeys.vehicles.list(vehicleParams),
-    "vehicles",
-    vehicleParams,
-  );
+  const services = usePagedResource<Service>(queryKeys.services.list(serviceParams), "services", serviceParams);
 
-  const service = useMemo(
-    () => services.data?.data.find((item) => item.id === serviceId) ?? null,
-    [services.data, serviceId],
+  const startIso = useMemo(
+    () => (time === null ? null : zonedTimeToIso(`${date}T${minutesToLabelClock(time)}`, timeZone)),
+    [date, time, timeZone],
   );
-  const vehicle = useMemo(
-    () => vehicles.data?.data.find((item) => item.id === vehicleId) ?? null,
-    [vehicles.data, vehicleId],
-  );
+  // Captured once: the server re-checks the time on submit, so this only has to
+  // stop an obviously past slot from being offered.
+  const [openedAt] = useState(() => Date.now());
+  const inPast = startIso !== null && new Date(startIso).getTime() <= openedAt;
 
-  // The API computes the real end time; this is the same arithmetic, for preview only.
-  const previewEnd = useMemo(() => {
-    if (!service || !slot) return null;
-    const end = new Date(slot);
-    end.setMinutes(end.getMinutes() + service.duration_minutes);
-    return end.toISOString();
-  }, [service, slot]);
+  const candidateParams = { service_id: service?.id, start: startIso };
+  const candidates = useQuery<{ data: AssignableEmployee[] }, ApiError>({
+    queryKey: queryKeys.bookings.candidates(candidateParams),
+    queryFn: () =>
+      apiFetch<{ data: AssignableEmployee[] }>(
+        `scheduling/candidates?service_id=${service!.id}&start=${encodeURIComponent(startIso!)}`,
+      ),
+    enabled: Boolean(service && startIso && !inPast),
+  });
+  const technician = candidates.data?.data.find((candidate) => candidate.id === employeeId) ?? null;
 
-  // One key per version of the booking the user is trying to make. Retrying the
-  // same booking - a double click, a dropped response, a refresh - reuses it and
-  // the server replays the original instead of creating a second appointment.
-  // Editing any field makes it a different booking, so the key changes with the
-  // payload; the mount nonce keeps two wizards from colliding on one key.
+  // One key per version of the booking being made: a double click, a dropped
+  // response or a refresh replays the original instead of booking twice.
   const [nonce] = useState(newIdempotencyKey);
-  const idempotencyKey = useMemo(
-    () => `${nonce}-${fingerprint([serviceId, vehicleId, slot, notes.trim()].join("|"))}`,
-    [nonce, serviceId, vehicleId, slot, notes],
-  );
+  const idempotencyKey = `${nonce}-${fingerprint(
+    [chosenCustomer?.id, service?.id, startIso, employeeId, notes.trim()].join("|"),
+  )}`;
 
   const submit = useResourceMutation<void, Booking>(
     () =>
@@ -96,96 +156,145 @@ export function BookingWizard() {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
         body: JSON.stringify({
-          service_id: serviceId,
-          vehicle_id: vehicleId,
-          requested_start: toIsoWithOffset(slot),
+          customer_id: staff ? chosenCustomer?.id : undefined,
+          service_id: service?.id,
+          employee_id: employeeId || null,
+          requested_start: startIso,
           customer_notes: notes.trim() || null,
         }),
       }),
     {
-      invalidate: [queryKeys.bookings.all],
-      successMessage: "Booking requested — we'll confirm shortly",
+      invalidate: OPERATIONS_KEYS,
+      successMessage: (booking) =>
+        booking.status === "CONFIRMED"
+          ? `Booked with ${booking.job?.employee_name ?? "a technician"}`
+          : staff
+            ? "Booking created - it's waiting for a technician"
+            : "Booking requested - we'll confirm a technician shortly",
     },
   );
 
   async function onSubmit() {
+    setConflict(null);
     try {
-      await submit.mutateAsync();
-      router.push("/bookings");
+      const booking = await submit.mutateAsync();
+      router.push(`/bookings/${booking.id}`);
       router.refresh();
-    } catch {
-      // The mutation hook already surfaced the server's message as a toast.
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setConflict(errorMessage(error, "That slot is no longer available."));
+        void candidates.refetch();
+      }
     }
   }
 
-  function goToDateStep() {
-    setSlotError(null);
-    setStep(2);
-  }
-
-  function confirmSlot() {
-    if (!slot) {
-      setSlotError("Choose a date and time.");
-      return;
-    }
-    if (new Date(slot).getTime() <= Date.now()) {
-      setSlotError("Choose a time in the future.");
-      return;
-    }
-    setSlotError(null);
-    setStep(3);
-  }
+  const index = steps.indexOf(step);
+  const go = (next: Step) => {
+    setConflict(null);
+    setStep(next);
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <div className="space-y-1">
-        <Button variant="ghost" size="sm" className="-ml-2" onClick={() => router.push("/bookings")}>
+        <Button variant="ghost" size="sm" className="-ml-2" render={<Link href="/bookings" />}>
           <ArrowLeft className="size-4" aria-hidden />
-          Back to bookings
+          Bookings
         </Button>
-        <h1 className="text-[20px] font-semibold leading-tight tracking-[-0.015em]">Book a service</h1>
+        <h1 className="text-[20px] font-semibold leading-tight tracking-[-0.015em]">
+          {staff ? "New booking" : "Book a service"}
+        </h1>
       </div>
 
       <ol className="flex flex-wrap items-center gap-2" aria-label="Progress">
-        {/* A stepper, not four pill buttons: the number carries the state and
-            the rule between them carries the progression. */}
-        {STEPS.map((label, index) => (
-          <li key={label} className="flex items-center gap-2">
-            {index > 0 ? (
-              <span
-                aria-hidden
-                className={cn("h-px w-6", index <= step ? "bg-accent-solid/50" : "bg-border")}
-              />
+        {steps.map((name, position) => (
+          <li key={name} className="flex items-center gap-2">
+            {position > 0 ? (
+              <span aria-hidden className={cn("h-px w-6", position <= index ? "bg-accent-solid/50" : "bg-border")} />
             ) : null}
             <span
-              aria-current={index === step ? "step" : undefined}
+              aria-current={name === step ? "step" : undefined}
               className={cn(
-                "flex items-center gap-2 text-[13px] transition-colors duration-100",
-                index === step && "font-medium text-foreground",
-                index < step && "text-muted-foreground",
-                index > step && "text-muted-foreground/60",
+                "flex items-center gap-2 text-[13px]",
+                name === step ? "font-medium text-foreground" : position < index ? "text-muted-foreground" : "text-muted-foreground/60",
               )}
             >
               <span
                 className={cn(
                   "flex size-5 items-center justify-center rounded-full text-[11px] font-medium",
-                  index < step && "bg-accent-solid text-accent-solid-foreground",
-                  index === step && "border border-accent-solid text-accent-solid",
-                  index > step && "border border-border text-muted-foreground/70",
+                  position < index && "bg-accent-solid text-accent-solid-foreground",
+                  name === step && "border border-accent-solid text-accent-solid",
+                  position > index && "border border-border text-muted-foreground/70",
                 )}
               >
-                {index < step ? <Check className="size-3" aria-hidden /> : index + 1}
+                {position < index ? <Check className="size-3" aria-hidden /> : position + 1}
               </span>
-              {label}
+              {labels[name]}
             </span>
           </li>
         ))}
       </ol>
 
-      {step === 0 ? (
+      {step === "customer" ? (
+        <section aria-label="Choose a customer" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SearchInput
+              value={customerQuery}
+              onChange={setCustomerQuery}
+              label="Search customers"
+              placeholder="Name, email, phone or address"
+            />
+            <Button variant="outline" size="sm" render={<Link href="/customers?new=1" />}>
+              Add a customer
+            </Button>
+          </div>
+          {customers.isPending ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CardSkeletons count={4} />
+            </div>
+          ) : null}
+          {customers.isError ? (
+            <Card>
+              <ErrorState error={customers.error} onRetry={() => customers.refetch()} />
+            </Card>
+          ) : null}
+          {customers.isSuccess && customers.data.data.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={Users}
+                title={customerQuery ? `No customers match “${customerQuery}”` : "No customers yet"}
+                description="Add the customer first, then come back to book."
+              />
+            </Card>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(customers.data?.data ?? []).map((option) => (
+              <Choice
+                key={option.id}
+                selected={chosenCustomer?.id === option.id}
+                onSelect={() => {
+                  setCustomer(option);
+                  go("service");
+                }}
+              >
+                <p className="truncate text-[14px] font-medium">{option.user.full_name}</p>
+                <p className="truncate text-[12px] text-muted-foreground">{option.address ?? option.user.email}</p>
+              </Choice>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {step === "service" ? (
         <section aria-label="Choose a service" className="space-y-4">
+          {staff && chosenCustomer ? (
+            <p className="text-[13px] text-muted-foreground">
+              For <span className="font-medium text-foreground">{chosenCustomer.user.full_name}</span>
+              {chosenCustomer.address ? ` · ${chosenCustomer.address}` : ""}
+            </p>
+          ) : null}
           {services.isPending ? (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               <CardSkeletons count={4} />
             </div>
           ) : null}
@@ -196,232 +305,253 @@ export function BookingWizard() {
           ) : null}
           {services.isSuccess && services.data.data.length === 0 ? (
             <Card>
-              <EmptyState
-                icon={Sparkles}
-                title="No services available"
-                description="This business hasn't published any bookable services yet."
-              />
+              <EmptyState icon={Tags} title="No services available" description="This business hasn't published any bookable services yet." />
             </Card>
           ) : null}
-
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             {(services.data?.data ?? []).map((option) => (
-              <button
+              <Choice
                 key={option.id}
-                type="button"
-                onClick={() => {
-                  setServiceId(option.id);
-                  setStep(1);
+                selected={service?.id === option.id}
+                onSelect={() => {
+                  setService(option);
+                  setEmployeeId("");
+                  go("time");
                 }}
-                className={cn(
-                  "focus-ring rounded-lg border bg-surface p-4 text-left transition-colors duration-75",
-                  "hover:border-accent-solid/40 hover:bg-muted/40",
-                  serviceId === option.id && "border-accent-solid/50 bg-accent-solid/[0.05]",
-                )}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <h2 className="font-medium">{option.name}</h2>
-                  <span className="shrink-0 font-medium tabular-nums">
-                    {formatPrice(option.base_price)}
-                  </span>
+                  <p className="text-[14px] font-medium">{option.name}</p>
+                  <span className="shrink-0 text-[14px] font-medium tabular-nums">{formatPrice(option.base_price)}</span>
                 </div>
                 {option.description ? (
-                  <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">
-                    {option.description}
-                  </p>
+                  <p className="mt-1 line-clamp-2 text-[13px] text-muted-foreground">{option.description}</p>
                 ) : null}
-                <p className="mt-3 flex items-center gap-1.5 text-sm text-muted-foreground">
+                <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground">
                   <Clock className="size-3.5" aria-hidden />
                   {formatDuration(option.duration_minutes)}
                 </p>
-              </button>
+              </Choice>
             ))}
           </div>
+          {staff ? (
+            <Button variant="outline" onClick={() => go("customer")}>
+              Back
+            </Button>
+          ) : null}
         </section>
       ) : null}
 
-      {step === 1 ? (
-        <section aria-label="Choose a vehicle" className="space-y-4">
-          {vehicles.isPending ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <CardSkeletons count={2} />
-            </div>
-          ) : null}
-          {vehicles.isError ? (
-            <Card>
-              <ErrorState error={vehicles.error} onRetry={() => vehicles.refetch()} />
-            </Card>
-          ) : null}
-          {vehicles.isSuccess && vehicles.data.data.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={Car}
-                title="No vehicles yet"
-                description="Add a vehicle first so we know what we'll be working on."
-                action={
-                  <Button size="sm" onClick={() => router.push("/vehicles")}>
-                    Add a vehicle
-                  </Button>
-                }
-              />
-            </Card>
-          ) : null}
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            {(vehicles.data?.data ?? []).map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => {
-                  setVehicleId(option.id);
-                  goToDateStep();
-                }}
-                className={cn(
-                  "focus-ring flex items-center gap-3 rounded-lg border bg-surface p-4 text-left transition-colors duration-75 hover:border-accent-solid/40 hover:bg-muted/40",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  vehicleId === option.id && "border-accent-solid/50 bg-accent-solid/[0.05]",
-                )}
-              >
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-                  <Car className="size-5 text-muted-foreground" aria-hidden />
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{option.display_name}</p>
-                  <p className="truncate text-sm text-muted-foreground">
-                    {[option.color, option.license_plate].filter(Boolean).join(" · ") || "—"}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <Button variant="outline" onClick={() => setStep(0)}>
-            Back
-          </Button>
-        </section>
-      ) : null}
-
-      {step === 2 ? (
-        <section aria-label="Choose a date and time" className="space-y-4">
-          <Card className="space-y-4 p-5">
-            <div className="space-y-2">
-              <Label htmlFor="slot">Preferred date and time</Label>
+      {step === "time" && service ? (
+        <section aria-label="Choose a time and technician" className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <Card className="h-fit space-y-4 p-5">
+            <div className="space-y-1.5">
+              <Label htmlFor="booking-date">Date</Label>
               <Input
-                id="slot"
-                type="datetime-local"
-                min={minimumSlot()}
-                value={slot}
-                aria-invalid={Boolean(slotError)}
-                aria-describedby={slotError ? "slot-error" : "slot-help"}
+                id="booking-date"
+                type="date"
+                min={todayIn(timeZone)}
+                value={date}
                 onChange={(event) => {
-                  setSlot(event.target.value);
-                  setSlotError(null);
+                  setDate(event.target.value);
+                  setEmployeeId("");
                 }}
               />
-              {slotError ? (
-                <p id="slot-error" className="text-sm text-destructive">
-                  {slotError}
-                </p>
-              ) : (
-                <p id="slot-help" className="text-sm text-muted-foreground">
-                  {service
-                    ? `${service.name} takes about ${formatDuration(service.duration_minutes)}.`
-                    : null}
-                  {previewEnd ? ` Expected to finish around ${formatTime(previewEnd)}.` : null}
-                </p>
-              )}
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="booking-time">Start time</Label>
+              <FieldSelect
+                id="booking-time"
+                label="Start time"
+                value={time === null ? "" : String(time)}
+                onChange={(value) => {
+                  setTime(value === "" ? null : Number(value));
+                  setEmployeeId("");
+                }}
+                className="w-full"
+              >
+                <option value="">Choose a time</option>
+                {TIMES.map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    {minutesToLabel(minutes)}
+                  </option>
+                ))}
+              </FieldSelect>
+              <p className="text-[12px] text-muted-foreground">
+                {service.name} takes {formatDuration(service.duration_minutes)}. Times are in the business&apos;s local time (
+                {timeZone.split("/").pop()?.replace("_", " ")}).
+              </p>
+              {inPast ? <p className="text-[13px] text-destructive">Choose a time that hasn&apos;t passed yet.</p> : null}
+            </div>
+          </Card>
 
-            <div className="space-y-2">
-              <Label htmlFor="notes">Anything we should know? (optional)</Label>
+          <Card className="space-y-3 p-5">
+            <h2 className="text-[14px] font-medium">Technician</h2>
+            {!startIso || inPast ? (
+              <p className="text-[13px] text-muted-foreground">Choose a date and time to see who&apos;s available.</p>
+            ) : null}
+            {candidates.isFetching && !candidates.data ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : null}
+            {candidates.isError ? <ErrorState error={candidates.error} onRetry={() => candidates.refetch()} /> : null}
+            {candidates.data ? (
+              <div className="divide-y overflow-hidden rounded-md border" role="radiogroup" aria-label="Technician">
+                <label className={cn("flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-muted/50", employeeId === "" && "bg-accent-solid/[0.06]")}>
+                  <input
+                    type="radio"
+                    name="technician"
+                    className="mt-1 size-3.5 accent-[var(--accent-solid)]"
+                    checked={employeeId === ""}
+                    onChange={() => setEmployeeId("")}
+                  />
+                  <span>
+                    <span className="block text-[13px] font-medium">{staff ? "Leave unassigned" : "No preference"}</span>
+                    <span className="block text-[12px] text-muted-foreground">
+                      {staff ? "It waits on the jobs board until someone is assigned." : "The team assigns the best available technician."}
+                    </span>
+                  </span>
+                </label>
+                {candidates.data.data.length === 0 ? (
+                  <p className="px-3 py-3 text-[13px] text-muted-foreground">
+                    {staff ? `Nobody is qualified for ${service.name} yet.` : "No technician is free at that time. Try another time, or leave it with no preference."}
+                  </p>
+                ) : null}
+                {candidates.data.data.map((candidate) => (
+                  <label
+                    key={candidate.id}
+                    className={cn(
+                      "flex items-start gap-3 px-3 py-2.5",
+                      candidate.assignable ? "cursor-pointer hover:bg-muted/50" : "cursor-not-allowed",
+                      employeeId === candidate.id && "bg-accent-solid/[0.06]",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="technician"
+                      className="mt-1 size-3.5 accent-[var(--accent-solid)]"
+                      checked={employeeId === candidate.id}
+                      disabled={!candidate.assignable}
+                      onChange={() => setEmployeeId(candidate.id)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-x-2">
+                        <span className={cn("text-[13px] font-medium", !candidate.assignable && "text-muted-foreground")}>
+                          {candidate.full_name}
+                        </span>
+                        <span className="text-[12px] text-muted-foreground">{candidate.job_title}</span>
+                        {!candidate.assignable ? (
+                          <span className="text-[11px] font-medium text-muted-foreground">{candidate.conflict ? "Booked" : "Not working"}</span>
+                        ) : null}
+                      </span>
+                      {candidate.reason ? (
+                        <span className="block text-[12px] text-muted-foreground">{candidate.reason}</span>
+                      ) : staff ? (
+                        <span className="block text-[12px] text-muted-foreground">
+                          {candidate.jobs_today} {candidate.jobs_today === 1 ? "job" : "jobs"} that day
+                        </span>
+                      ) : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" onClick={() => go("service")}>
+                Back
+              </Button>
+              <Button disabled={!startIso || inPast} onClick={() => go("review")}>
+                Review
+              </Button>
+            </div>
+          </Card>
+        </section>
+      ) : null}
+
+      {step === "review" && service && startIso ? (
+        <section aria-label="Review and confirm" className="space-y-4">
+          {conflict ? (
+            <div role="alert" className="flex items-start gap-3 rounded-lg border border-status-danger/30 bg-status-danger/[0.07] p-3.5">
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-status-danger" aria-hidden />
+              <div className="space-y-2">
+                <p className="text-[13px] font-medium">{conflict}</p>
+                <Button variant="outline" size="sm" onClick={() => go("time")}>
+                  Choose another technician or time
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <Card className="divide-y p-0">
+            <dl className="grid gap-4 p-5 sm:grid-cols-2">
+              {staff && chosenCustomer ? (
+                <div>
+                  <dt className="text-[12px] text-muted-foreground">Customer</dt>
+                  <dd className="mt-1 text-[14px] font-medium">{chosenCustomer.user.full_name}</dd>
+                  <dd className="text-[13px] text-muted-foreground">{chosenCustomer.address ?? "No address on file"}</dd>
+                </div>
+              ) : null}
+              <div>
+                <dt className="text-[12px] text-muted-foreground">Service</dt>
+                <dd className="mt-1 text-[14px] font-medium">{service.name}</dd>
+                <dd className="text-[13px] text-muted-foreground">
+                  {formatPrice(service.base_price)} · {formatDuration(service.duration_minutes)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[12px] text-muted-foreground">When</dt>
+                <dd className="mt-1 text-[14px] font-medium">
+                  {formatWindow(startIso, new Date(new Date(startIso).getTime() + service.duration_minutes * 60_000).toISOString(), timeZone)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[12px] text-muted-foreground">Technician</dt>
+                <dd className="mt-1 flex items-center gap-1.5 text-[14px] font-medium">
+                  <UserRound className="size-4 text-muted-foreground" aria-hidden />
+                  {technician ? technician.full_name : staff ? "Unassigned for now" : "No preference"}
+                </dd>
+              </div>
+            </dl>
+            <div className="space-y-2 p-5">
+              <Label htmlFor="booking-notes">{staff ? "Notes for the technician (optional)" : "Anything we should know? (optional)"}</Label>
               <Textarea
-                id="notes"
+                id="booking-notes"
                 rows={3}
                 maxLength={2000}
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
-                placeholder="Pet hair in the back, water spots on the hood..."
+                aria-describedby="booking-notes-help"
               />
+              <p id="booking-notes-help" className="text-[12px] text-muted-foreground">
+                For example: gate code, where the water heater is, pets at home.
+              </p>
             </div>
           </Card>
 
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStep(1)}>
-              Back
-            </Button>
-            <Button onClick={confirmSlot}>Review</Button>
-          </div>
-        </section>
-      ) : null}
-
-      {step === 3 && service && vehicle ? (
-        <section aria-label="Review and submit" className="space-y-4">
-          <Card className="divide-y p-0">
-            <dl className="grid gap-3 p-5 sm:grid-cols-2">
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-muted-foreground">Service</dt>
-                <dd className="mt-1 font-medium">{service.name}</dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-muted-foreground">Vehicle</dt>
-                <dd className="mt-1 font-medium">{vehicle.display_name}</dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Requested time
-                </dt>
-                <dd className="mt-1 font-medium">
-                  {new Date(slot).toLocaleString("en-US", {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Estimated
-                </dt>
-                <dd className="mt-1 font-medium">
-                  {formatPrice(service.base_price)} ·{" "}
-                  {formatDuration(service.duration_minutes)}
-                </dd>
-              </div>
-            </dl>
-            {notes.trim() ? (
-              <div className="p-5">
-                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Your notes
-                </dt>
-                <dd className="mt-1 whitespace-pre-wrap text-sm">{notes}</dd>
-              </div>
-            ) : null}
-          </Card>
-
-          <p className="text-sm text-muted-foreground">
-            We&apos;ll review your request and confirm a technician. You can cancel any time
-            before then.
+          <p className="text-[13px] text-muted-foreground">
+            {technician
+              ? `${technician.full_name} is booked for this slot as soon as you confirm, at ${formatTime(startIso, timeZone)}.`
+              : "It's saved without a technician and appears on the jobs board as needing one."}{" "}
+            A confirmation email is sent after the booking is saved.
           </p>
 
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStep(2)} disabled={submit.isPending}>
+            <Button variant="outline" onClick={() => go("time")} disabled={submit.isPending}>
               Back
             </Button>
             <Button onClick={onSubmit} disabled={submit.isPending}>
-              {submit.isPending ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                  Submitting...
-                </>
-              ) : (
-                "Request booking"
-              )}
+              {submit.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              {submit.isPending ? "Booking..." : "Confirm booking"}
             </Button>
           </div>
         </section>
       ) : null}
     </div>
   );
+}
+
+/** 510 -> "08:30", for building a local date-time string. */
+function minutesToLabelClock(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }

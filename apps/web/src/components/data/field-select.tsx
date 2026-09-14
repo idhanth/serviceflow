@@ -13,12 +13,15 @@ import { cn } from "@/lib/utils";
  * and behave worse.
  */
 export function FieldSelect({
+  id,
   label,
   value,
   onChange,
   children,
   className,
 }: {
+  /** Set when a visible <Label htmlFor> names the select; aria-label is used otherwise. */
+  id?: string;
   label: string;
   value: string;
   onChange: (next: string) => void;
@@ -28,7 +31,8 @@ export function FieldSelect({
   return (
     <div className={cn("relative", className)}>
       <select
-        aria-label={label}
+        id={id}
+        aria-label={id ? undefined : label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className={cn(

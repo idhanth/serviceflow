@@ -27,6 +27,7 @@ const baseShape = {
   first_name: z.string().trim().min(1, "Enter a first name.").max(100),
   last_name: z.string().trim().min(1, "Enter a last name.").max(100),
   phone: z.string().trim().max(40).optional(),
+  address: z.string().trim().max(300).optional(),
   notes: z.string().trim().max(2000).optional(),
 };
 
@@ -57,7 +58,7 @@ export function CustomerFormDialog({
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver((editing ? editSchema : createSchema) as typeof createSchema),
-    defaultValues: { email: "", first_name: "", last_name: "", phone: "", notes: "" },
+    defaultValues: { email: "", first_name: "", last_name: "", phone: "", address: "", notes: "" },
   });
 
   useEffect(() => {
@@ -69,9 +70,10 @@ export function CustomerFormDialog({
             first_name: customer.user.first_name,
             last_name: customer.user.last_name,
             phone: customer.user.phone ?? "",
+            address: customer.address ?? "",
             notes: customer.notes ?? "",
           }
-        : { email: "", first_name: "", last_name: "", phone: "", notes: "" },
+        : { email: "", first_name: "", last_name: "", phone: "", address: "", notes: "" },
     );
   }, [open, customer, reset]);
 
@@ -83,16 +85,22 @@ export function CustomerFormDialog({
             first_name: values.first_name,
             last_name: values.last_name,
             phone: values.phone || null,
+            address: values.address || null,
             notes: values.notes || null,
           }
-        : { ...values, phone: values.phone || null, notes: values.notes || null };
+        : {
+            ...values,
+            phone: values.phone || null,
+            address: values.address || null,
+            notes: values.notes || null,
+          };
       return apiFetchData<Customer>(editing ? `customers/${customer!.id}` : "customers", {
         method: editing ? "PATCH" : "POST",
         body: JSON.stringify(body),
       });
     },
     {
-      invalidate: [queryKeys.customers.all, queryKeys.vehicles.all],
+      invalidate: [queryKeys.customers.all, queryKeys.dashboard.all],
       successMessage: (result) =>
         editing ? `${result.user.full_name} updated` : `${result.user.full_name} added`,
     },
@@ -117,7 +125,7 @@ export function CustomerFormDialog({
           <DialogDescription>
             {editing
               ? "Update contact details and internal notes."
-              : "Add someone to your customer list. They can be given sign-in access later."}
+              : "Add someone to your customer list. They can be given sign-in access later from Settings."}
           </DialogDescription>
         </DialogHeader>
 
@@ -171,9 +179,21 @@ export function CustomerFormDialog({
               id="customer-phone"
               type="tel"
               autoComplete="tel"
-              placeholder="+1 (415) 555-0100"
               {...register("phone")}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="customer-address">Service address</Label>
+            <Input
+              id="customer-address"
+              autoComplete="street-address"
+              aria-describedby="customer-address-help"
+              {...register("address")}
+            />
+            <p id="customer-address-help" className="text-[12px] text-muted-foreground">
+              Where technicians go for this customer&apos;s jobs.
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -181,10 +201,14 @@ export function CustomerFormDialog({
             <Textarea
               id="customer-notes"
               rows={3}
-              placeholder="Only your team sees this."
+              aria-describedby="customer-notes-help"
               {...register("notes")}
             />
           </div>
+
+          <p id="customer-notes-help" className="-mt-2 text-[12px] text-muted-foreground">
+            Internal notes are only visible to your team - gate codes, pets, parking.
+          </p>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

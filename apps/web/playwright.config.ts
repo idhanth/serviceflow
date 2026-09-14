@@ -5,16 +5,15 @@ import { defineConfig, devices } from "@playwright/test";
  * FastAPI backend, PostgreSQL, Redis, MinIO and (where a flow needs it) the
  * Celery worker and MailPit. Nothing here is mocked - that is the point.
  *
- * Start the stack with `./scripts/e2e.sh`, which is also what runs this.
+ * Start the stack first (`docker compose up --build -d`), then `npx playwright test`.
  */
-const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
+const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./e2e/specs",
   // Serial by design, and the spec files are numbered so they run in story
-  // order. The suite drives one seeded organization and hands work between
-  // roles (a customer books, an admin confirms, an employee finishes); running
-  // it in parallel would test the harness rather than the product.
+  // order: a dispatcher books, the technician finishes the job, other roles and
+  // another business then try to reach it.
   fullyParallel: false,
   workers: 1,
   // No retries: a flaky test is a bug to fix, not to paper over.
@@ -23,7 +22,6 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   globalSetup: "./e2e/support/global-setup.ts",
-  globalTeardown: "./e2e/support/global-teardown.ts",
   use: {
     baseURL: BASE_URL,
     trace: "retain-on-failure",

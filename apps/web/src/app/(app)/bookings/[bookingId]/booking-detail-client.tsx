@@ -1,12 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Camera, Car, MessageSquare, User } from "lucide-react";
+import { ArrowLeft, Camera, MapPin, MessageSquare, User, Wrench } from "lucide-react";
 import Link from "next/link";
 
 import { BookingStatusBadge, JobStatusBadge } from "@/components/data/status-badge";
 import { EmptyState, ErrorState } from "@/components/data/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -17,16 +16,20 @@ import { queryKeys } from "@/lib/query-keys";
 import type { Booking, JobNote, JobPhoto } from "@/lib/types";
 
 /**
- * The customer's view of one booking. Photos and notes come from the same
- * endpoints staff use; the API decides what a customer may see, so nothing is
- * filtered here - an INTERNAL note simply never arrives.
+ * One booking, for its customer or for staff. Photos and notes come from the
+ * same endpoints either way; the API decides what each may see, so nothing is
+ * filtered here - an INTERNAL note simply never arrives for a customer.
  */
 export function BookingDetailClient({
   bookingId,
   timeZone,
+  staff,
+  canOpenJob,
 }: {
   bookingId: string;
   timeZone: string;
+  staff: boolean;
+  canOpenJob: boolean;
 }) {
   const booking = useQuery<{ data: Booking }, ApiError>({
     queryKey: queryKeys.bookings.detail(bookingId),
@@ -86,8 +89,8 @@ export function BookingDetailClient({
           Back to bookings
         </Button>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{row.service.name}</h1>
-          <BookingStatusBadge status={row.status} />
+          <h1 className="text-[20px] font-semibold leading-tight tracking-[-0.015em]">{row.service.name}</h1>
+          <BookingStatusBadge status={row.status} variant="chip" />
           {row.job ? <JobStatusBadge status={row.job.status} /> : null}
         </div>
         <p className="text-sm text-muted-foreground">
@@ -98,25 +101,35 @@ export function BookingDetailClient({
 
       <Card className="space-y-4 p-5">
         <section className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1">
-            <h2 className="text-xs uppercase tracking-wide text-muted-foreground">Vehicle</h2>
-            <p className="flex items-center gap-2 font-medium">
-              <Car className="size-4 text-muted-foreground" aria-hidden />
-              {row.vehicle.display_name}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {[row.vehicle.color, row.vehicle.license_plate].filter(Boolean).join(" · ") || "—"}
-            </p>
-          </div>
+          {staff && row.customer ? (
+            <div className="space-y-1">
+              <h2 className="text-[12px] text-muted-foreground">Customer</h2>
+              <p className="flex items-center gap-2 text-[14px] font-medium">
+                <User className="size-4 text-muted-foreground" aria-hidden />
+                <Link href={`/customers/${row.customer.id}`} className="focus-ring hover:underline">
+                  {row.customer.full_name}
+                </Link>
+              </p>
+              {row.customer.address ? (
+                <p className="flex items-start gap-2 text-[13px] text-muted-foreground">
+                  <MapPin className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  {row.customer.address}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           {row.job ? (
             <div className="space-y-1">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
-                Technician
-              </h2>
-              <p className="flex items-center gap-2 font-medium">
-                <User className="size-4 text-muted-foreground" aria-hidden />
-                {row.job.employee_name}
+              <h2 className="text-[12px] text-muted-foreground">Technician</h2>
+              <p className="flex items-center gap-2 text-[14px] font-medium">
+                <Wrench className="size-4 text-muted-foreground" aria-hidden />
+                {row.job.employee_name ?? "Not assigned yet"}
               </p>
+              {canOpenJob ? (
+                <Link href={`/jobs/${row.job.id}`} className="focus-ring text-[13px] text-accent-solid hover:underline">
+                  Open job
+                </Link>
+              ) : null}
               {row.job.completed_at ? (
                 <p className="text-sm text-muted-foreground">
                   Finished {formatRelative(row.job.completed_at)}
@@ -130,10 +143,10 @@ export function BookingDetailClient({
           <>
             <Separator />
             <section className="space-y-1.5">
-              <h2 className="text-xs uppercase tracking-wide text-muted-foreground">
-                What you asked for
+              <h2 className="text-[12px] text-muted-foreground">
+                {staff ? "Note from the customer" : "What you asked for"}
               </h2>
-              <p className="whitespace-pre-wrap rounded-lg border p-3 text-sm">
+              <p className="whitespace-pre-wrap border-l-2 border-border pl-3 text-[13px]">
                 {row.customer_notes}
               </p>
             </section>
@@ -186,7 +199,7 @@ export function BookingDetailClient({
                           {/* eslint-disable-next-line @next/next/no-img-element -- presigned S3 URLs are not a configured next/image host */}
                           <img
                             src={photo.url}
-                            alt={`${kind.toLowerCase()} photo of your ${row.vehicle.display_name}`}
+                            alt={`${kind.toLowerCase()} photo from the ${row.service.name} visit`}
                             loading="lazy"
                             className="aspect-square w-full bg-muted object-cover"
                           />
@@ -242,16 +255,11 @@ export function BookingDetailClient({
           <EmptyState
             icon={Camera}
             title="Nothing to show yet"
-            description="Once this booking is confirmed and the work begins, photos and notes appear here."
+            description="Photos and notes from the visit appear here once the work begins."
           />
         </Card>
       )}
 
-      {row.status === "PENDING" ? (
-        <Badge variant="outline" className="bg-muted text-muted-foreground">
-          Waiting on confirmation
-        </Badge>
-      ) : null}
     </div>
   );
 }

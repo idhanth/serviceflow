@@ -72,7 +72,7 @@ export function WeeklyEditor({
         body: JSON.stringify({ windows }),
       }),
     {
-      invalidate: [queryKeys.availability.all, queryKeys.calendar.all, queryKeys.bookings.all],
+      invalidate: [queryKeys.availability.all, queryKeys.schedule.all, queryKeys.bookings.all],
       successMessage: "Weekly schedule saved",
     },
   );

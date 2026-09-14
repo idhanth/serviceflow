@@ -64,13 +64,13 @@ export function useRealtime(): RealtimeStatus {
             break;
           case "booking":
             void queryClient.invalidateQueries({ queryKey: queryKeys.bookings.all });
-            void queryClient.invalidateQueries({ queryKey: queryKeys.calendar.all });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.schedule.all });
             void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
             break;
           case "job":
             void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
             void queryClient.invalidateQueries({ queryKey: queryKeys.bookings.all });
-            void queryClient.invalidateQueries({ queryKey: queryKeys.calendar.all });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.schedule.all });
             break;
         }
       };

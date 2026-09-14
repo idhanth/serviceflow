@@ -44,7 +44,7 @@ const FILTERS = [
 
 type Filter = (typeof FILTERS)[number]["value"];
 
-export function EmployeesClient() {
+export function EmployeesClient({ canWrite }: { canWrite: boolean }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [page, setPage] = useState(1);
@@ -94,15 +94,18 @@ export function EmployeesClient() {
         title="Employees"
         description="Your team and what each person is qualified to do."
         action={
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="size-4" aria-hidden />
-            Add employee
-          </Button>
+          canWrite ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditing(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="size-3.5" aria-hidden />
+              Add employee
+            </Button>
+          ) : null
         }
       />
 
@@ -169,7 +172,7 @@ export function EmployeesClient() {
                           >
                             Clear filters
                           </Button>
-                        ) : (
+                        ) : canWrite ? (
                           <Button
                             size="sm"
                             onClick={() => {
@@ -180,7 +183,7 @@ export function EmployeesClient() {
                             <Plus className="size-4" aria-hidden />
                             Add employee
                           </Button>
-                        )
+                        ) : null
                       }
                     />
                   </TableCell>
@@ -231,6 +234,7 @@ export function EmployeesClient() {
                     <ActiveBadge active={employee.active} />
                   </TableCell>
                   <TableCell className="text-right">
+                    {canWrite ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         render={
@@ -271,6 +275,7 @@ export function EmployeesClient() {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}

@@ -1,6 +1,7 @@
 "use client";
 
-import { ClipboardList } from "lucide-react";
+import { CalendarPlus, ClipboardList } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { DataPanel, PanelFooter, PrimaryCell } from "@/components/data/data-panel";
@@ -29,7 +30,7 @@ import { BookingReviewSheet } from "./booking-review-sheet";
 
 const COLUMNS = 6;
 const FILTERS = [
-  { label: "Pending", value: "PENDING" },
+  { label: "Awaiting technician", value: "PENDING" },
   { label: "Confirmed", value: "CONFIRMED" },
   { label: "Declined", value: "REJECTED" },
   { label: "Cancelled", value: "CANCELLED" },
@@ -38,7 +39,15 @@ const FILTERS = [
 
 type Filter = (typeof FILTERS)[number]["value"];
 
-export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
+export function AdminBookingsClient({
+  timeZone,
+  canWrite,
+  canOpenCustomers,
+}: {
+  timeZone: string;
+  canWrite: boolean;
+  canOpenCustomers: boolean;
+}) {
   const [filter, setFilter] = useState<Filter>("PENDING");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -83,7 +92,15 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
     <div className="space-y-5">
       <PageHeader
         title="Bookings"
-        description="Requests from customers, waiting to be scheduled or already booked in."
+        description="Every appointment: waiting for a technician, booked in, or closed."
+        action={
+          canWrite ? (
+            <Button size="sm" render={<Link href="/bookings/new" />}>
+              <CalendarPlus className="size-3.5" aria-hidden />
+              New booking
+            </Button>
+          ) : null
+        }
       />
 
       <Toolbar className="justify-between">
@@ -113,7 +130,7 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
               key={booking.id}
               onClick={() => setReviewing(booking)}
               title={booking.customer?.full_name ?? "Unknown customer"}
-              subtitle={`${booking.service.name} · ${booking.vehicle.display_name}`}
+              subtitle={`${booking.service.name}${booking.customer?.address ? ` · ${booking.customer.address}` : ""}`}
               trailing={
                 <span className="text-[14px] font-medium tabular-nums">
                   {formatPrice(booking.service.base_price)}
@@ -125,11 +142,7 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
                     {formatDayLabel(booking.requested_start, timeZone)} ·{" "}
                     {formatTime(booking.requested_start, timeZone)}
                   </span>
-                  {booking.job ? (
-                    <JobStatusBadge status={booking.job.status} />
-                  ) : (
-                    <BookingStatusBadge status={booking.status} />
-                  )}
+                  <BookingStatusBadge status={booking.status} />
                 </>
               }
             />
@@ -177,9 +190,9 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
                       }
                       description={
                         q
-                          ? "Try a different name, service or vehicle."
+                          ? "Try a different customer name or service."
                           : filter === "PENDING"
-                            ? "New booking requests appear here for review."
+                            ? "Bookings made without a technician wait here until someone is assigned."
                             : "Try a different status."
                       }
                       action={
@@ -215,12 +228,23 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
                     }
                   }}
                 >
-                  {/* Customer and vehicle together: one identity, not two columns
-                      that have to be read across. */}
+                  {/* Who and where together: one identity, not two columns to read across. */}
                   <TableCell>
                     <PrimaryCell
-                      title={booking.customer?.full_name ?? "Unknown customer"}
-                      subtitle={booking.vehicle.display_name}
+                      title={
+                        canOpenCustomers && booking.customer ? (
+                          <Link
+                            href={`/customers/${booking.customer.id}`}
+                            className="focus-ring hover:underline"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {booking.customer.full_name}
+                          </Link>
+                        ) : (
+                          (booking.customer?.full_name ?? "Unknown customer")
+                        )
+                      }
+                      subtitle={booking.customer?.address ?? undefined}
                     />
                   </TableCell>
                   <TableCell>{booking.service.name}</TableCell>
@@ -233,11 +257,19 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
                   </TableCell>
                   {/* Who is doing it - the question the pending queue exists to
                       answer, and the first thing to check on a confirmed one. */}
-                  <TableCell className={booking.job ? undefined : "text-muted-foreground"}>
-                    {booking.job ? booking.job.employee_name : "Unassigned"}
+                  <TableCell
+                    className={
+                      booking.job?.employee_name
+                        ? undefined
+                        : booking.status === "PENDING"
+                          ? "font-medium text-status-pending"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {booking.job?.employee_name ?? "Unassigned"}
                   </TableCell>
                   <TableCell>
-                    {booking.job ? (
+                    {booking.job && booking.job.status !== "NEW" && booking.status !== "CANCELLED" && booking.status !== "REJECTED" ? (
                       <JobStatusBadge status={booking.job.status} />
                     ) : (
                       <BookingStatusBadge status={booking.status} />
@@ -261,6 +293,7 @@ export function AdminBookingsClient({ timeZone }: { timeZone: string }) {
       <BookingReviewSheet
         booking={active}
         timeZone={timeZone}
+        canWrite={canWrite}
         onOpenChange={(open) => !open && setReviewing(null)}
       />
     </div>

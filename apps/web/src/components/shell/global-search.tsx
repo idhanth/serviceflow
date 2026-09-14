@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Car, ClipboardList, Loader2, Search, Sparkles, User, Users, Wrench } from "lucide-react";
+import { ClipboardList, Loader2, Search, Tags, User, Users, Wrench } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -20,23 +20,21 @@ import type { SearchResult } from "@/lib/types";
 
 const ICONS = {
   customer: Users,
-  vehicle: Car,
   booking: ClipboardList,
-  job: Sparkles,
+  job: Wrench,
   employee: User,
-  service: Wrench,
+  service: Tags,
 } as const;
 
 const LABELS = {
   customer: "Customer",
-  vehicle: "Vehicle",
   booking: "Booking",
   job: "Job",
   employee: "Employee",
   service: "Service",
 } as const;
 
-/** Admin-only lookup across records (PRD 32), opened by click or Cmd/Ctrl+K. */
+/** Staff lookup across records, opened by click or Cmd/Ctrl+K. */
 export function GlobalSearch() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -92,7 +90,7 @@ export function GlobalSearch() {
           <DialogHeader className="sr-only">
             <DialogTitle>Search</DialogTitle>
             <DialogDescription>
-              Find customers, vehicles, bookings, jobs, employees and services.
+              Find customers, bookings, jobs, employees and services.
             </DialogDescription>
           </DialogHeader>
 
@@ -102,7 +100,7 @@ export function GlobalSearch() {
               autoFocus
               value={term}
               onChange={(event) => setTerm(event.target.value)}
-              placeholder="Customers, vehicles, bookings, jobs..."
+              placeholder="Customers, addresses, bookings, jobs..."
               aria-label="Search everything"
               className="border-0 shadow-none focus-visible:ring-0"
             />

@@ -35,14 +35,15 @@ const CHIP: Record<Tone, string> = {
 };
 
 const BOOKING: Record<BookingStatus, { label: string; tone: Tone }> = {
-  PENDING: { label: "Pending review", tone: "pending" },
+  PENDING: { label: "Awaiting technician", tone: "pending" },
   CONFIRMED: { label: "Confirmed", tone: "info" },
   REJECTED: { label: "Declined", tone: "danger" },
   CANCELLED: { label: "Cancelled", tone: "muted" },
 };
 
 const JOB: Record<JobStatus, { label: string; tone: Tone }> = {
-  ASSIGNED: { label: "Assigned", tone: "info" },
+  NEW: { label: "New", tone: "pending" },
+  SCHEDULED: { label: "Scheduled", tone: "info" },
   IN_PROGRESS: { label: "In progress", tone: "active" },
   COMPLETED: { label: "Completed", tone: "done" },
   CANCELLED: { label: "Cancelled", tone: "muted" },

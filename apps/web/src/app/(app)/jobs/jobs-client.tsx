@@ -9,67 +9,74 @@ import { DataPanel, PanelFooter, PrimaryCell } from "@/components/data/data-pane
 import { MobileList, MobileRow } from "@/components/data/mobile-list";
 import { PageHeader, Toolbar } from "@/components/data/page-header";
 import { PaginationControls } from "@/components/data/pagination-controls";
+import { SearchInput } from "@/components/data/search-input";
 import { Segmented } from "@/components/data/segmented";
 import { JobStatusBadge } from "@/components/data/status-badge";
 import { EmptyState, ErrorState, TableSkeletonRows } from "@/components/data/states";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { usePagedResource } from "@/hooks/use-resource";
 import { formatDayLabel, formatDuration, formatTime } from "@/lib/format";
 import { queryKeys } from "@/lib/query-keys";
 import type { Job, JobStatus } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-const FILTERS = [
-  { label: "Active", value: "active" },
-  { label: "Assigned", value: "ASSIGNED" },
+const TEAM_FILTERS = [
+  { label: "Needs technician", value: "NEW" },
+  { label: "Scheduled", value: "SCHEDULED" },
   { label: "In progress", value: "IN_PROGRESS" },
   { label: "Completed", value: "COMPLETED" },
   { label: "All", value: "all" },
 ] as const;
 
-type Filter = (typeof FILTERS)[number]["value"];
+const MY_FILTERS = [
+  { label: "Upcoming", value: "SCHEDULED" },
+  { label: "In progress", value: "IN_PROGRESS" },
+  { label: "Completed", value: "COMPLETED" },
+  { label: "All", value: "all" },
+] as const;
+
+type Filter = "NEW" | "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "all";
 
 /**
  * The work board.
  *
- * A table, not a stack of cards: a shop lead needs to compare a day's jobs at a
- * glance - who has what, when, and how far along - and cards make every row
- * cost the same vertical space as a paragraph.
+ * A table, not a stack of cards: a dispatcher compares a day's jobs at a glance -
+ * who has what, when, and how far along - and cards would make every row cost a
+ * paragraph of vertical space. Pagination and search happen on the server.
  */
-export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: boolean }) {
+export function JobsClient({
+  timeZone,
+  team,
+  initialFilter,
+}: {
+  timeZone: string;
+  team: boolean;
+  initialFilter?: string;
+}) {
   const router = useRouter();
-  const [filter, setFilter] = useState<Filter>("active");
+  const options = team ? TEAM_FILTERS : MY_FILTERS;
+  const fallback: Filter = team ? "NEW" : "SCHEDULED";
+  const [filter, setFilter] = useState<Filter>(
+    options.some((option) => option.value === initialFilter) ? (initialFilter as Filter) : fallback,
+  );
+  const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
 
-  // "Active" is two statuses, and the API filters by one. Fetching everything
-  // and filtering the current page client-side looked like this: page one of a
-  // date-ordered list is all completed work, so the board said "no active jobs"
-  // while its own footer counted 198. Active is fetched as its two statuses and
-  // merged; the rest go through the ordinary paged query.
-  const isActive = filter === "active";
+  // Work that is still ahead reads soonest-first; finished work newest-first.
+  const upcoming = filter === "NEW" || filter === "SCHEDULED";
   const params = {
     page,
     page_size: 20,
-    status: isActive || filter === "all" ? undefined : (filter as JobStatus),
+    q,
+    status: filter === "all" ? undefined : (filter as JobStatus),
+    timeframe: upcoming ? "upcoming" : undefined,
   };
-  const query = usePagedResource<Job>(queryKeys.jobs.list(params), "jobs", params, {
-    enabled: !isActive,
-  });
+  const query = usePagedResource<Job>(queryKeys.jobs.list(params), "jobs", params);
 
-  const assignedParams = { page: 1, page_size: 100, status: "ASSIGNED" as JobStatus };
-  const assigned = usePagedResource<Job>(queryKeys.jobs.list(assignedParams), "jobs", assignedParams, {
-    enabled: isActive,
-  });
-  const runningParams = { page: 1, page_size: 100, status: "IN_PROGRESS" as JobStatus };
-  const running = usePagedResource<Job>(queryKeys.jobs.list(runningParams), "jobs", runningParams, {
-    enabled: isActive,
+  const needsParams = { page: 1, page_size: 1, status: "NEW" as JobStatus, timeframe: "upcoming" };
+  const needs = usePagedResource<Job>(queryKeys.jobs.list(needsParams), "jobs", needsParams, {
+    enabled: team,
   });
 
   function changeFilter(next: Filter) {
@@ -77,41 +84,39 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
     setPage(1);
   }
 
-  const jobs = isActive
-    ? [...(running.data?.data ?? []), ...(assigned.data?.data ?? [])].sort((a, b) =>
-        a.scheduled_start.localeCompare(b.scheduled_start),
-      )
-    : (query.data?.data ?? []);
-
-  const pending = isActive ? assigned.isPending || running.isPending : query.isPending;
-  const failed = isActive ? assigned.isError || running.isError : query.isError;
-  const error = isActive ? (assigned.error ?? running.error) : query.error;
-  const refetch = isActive
-    ? () => {
-        void assigned.refetch();
-        void running.refetch();
-      }
-    : () => void query.refetch();
-  const showEmpty = !pending && !failed && jobs.length === 0;
-  const columns = isAdmin ? 5 : 4;
-
-  function open(jobId: string) {
-    router.push(`/jobs/${jobId}`);
-  }
+  const jobs = query.data?.data ?? [];
+  const columns = team ? 5 : 4;
+  const open = (jobId: string) => router.push(`/jobs/${jobId}`);
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title={isAdmin ? "Jobs" : "My work"}
+        title={team ? "Jobs" : "My Jobs"}
         description={
-          isAdmin
-            ? "Every job across the shop, and where each one stands."
-            : "The work assigned to you, newest first."
+          team
+            ? "Every job across the business, and where each one stands."
+            : "The work assigned to you. Start a job when you arrive and complete it when you're done."
         }
       />
 
-      <Toolbar>
-        <Segmented label="Filter jobs" value={filter} onChange={changeFilter} options={FILTERS} />
+      <Toolbar className="justify-between">
+        <Segmented
+          label="Filter jobs"
+          value={filter}
+          onChange={changeFilter}
+          options={options.map((option) =>
+            option.value === "NEW" ? { ...option, count: needs.data?.meta.total } : option,
+          )}
+        />
+        <SearchInput
+          value={q}
+          onChange={(next) => {
+            setQ(next);
+            setPage(1);
+          }}
+          label="Search jobs"
+          placeholder="Customer, address or service"
+        />
       </Toolbar>
 
       <DataPanel>
@@ -121,7 +126,7 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
               key={job.id}
               onClick={() => open(job.id)}
               title={job.service.name}
-              subtitle={`${job.customer.full_name} · ${job.vehicle.display_name}`}
+              subtitle={`${job.customer.full_name}${job.customer.address ? ` · ${job.customer.address}` : ""}`}
               trailing={
                 <span className="text-[12px] text-muted-foreground">
                   {formatDuration(job.service.duration_minutes)}
@@ -130,8 +135,8 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
               meta={
                 <>
                   <span className="text-[12px] text-muted-foreground">
-                    {formatDayLabel(job.scheduled_start, timeZone)} ·{" "}
-                    {formatTime(job.scheduled_start, timeZone)}
+                    {formatDayLabel(job.scheduled_start, timeZone)} · {formatTime(job.scheduled_start, timeZone)}
+                    {team ? ` · ${job.employee?.full_name ?? "Unassigned"}` : ""}
                   </span>
                   <JobStatusBadge status={job.status} />
                 </>
@@ -144,43 +149,51 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[230px]">Job</TableHead>
-                <TableHead className="min-w-[200px]">Scheduled</TableHead>
-                {isAdmin ? <TableHead className="min-w-[140px]">Technician</TableHead> : null}
+                <TableHead className="min-w-[260px]">Job</TableHead>
+                <TableHead className="min-w-[180px]">Scheduled</TableHead>
+                {team ? <TableHead className="min-w-[150px]">Technician</TableHead> : null}
                 <TableHead className="min-w-[140px]">Status</TableHead>
                 <TableHead className="min-w-[90px] text-right">Duration</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pending ? <TableSkeletonRows columns={columns} /> : null}
+              {query.isPending ? <TableSkeletonRows columns={columns} /> : null}
 
-              {failed ? (
+              {query.isError ? (
                 <TableRow>
                   <TableCell colSpan={columns} className="p-0">
-                    <ErrorState error={error} onRetry={refetch} />
+                    <ErrorState error={query.error} onRetry={() => query.refetch()} />
                   </TableCell>
                 </TableRow>
               ) : null}
 
-              {showEmpty ? (
+              {query.isSuccess && jobs.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={columns} className="p-0">
                     <EmptyState
                       icon={Wrench}
-                      title={filter === "active" ? "No active jobs" : "No jobs match this filter"}
+                      title={
+                        q
+                          ? `No jobs match “${q}”`
+                          : filter === "NEW"
+                            ? "Every upcoming job has a technician"
+                            : team
+                              ? "No jobs with this status"
+                              : "Nothing here right now"
+                      }
                       description={
-                        filter === "active"
-                          ? isAdmin
-                            ? "Confirm a pending booking to create work for the team."
-                            : "Nothing is assigned to you right now."
-                          : "Try a different status filter."
+                        q
+                          ? "Try a customer name, street or service."
+                          : filter === "NEW"
+                            ? "New bookings without a technician land here until someone is assigned."
+                            : "Try a different status."
                       }
                       action={
-                        filter === "active" ? null : (
-                          <Button variant="outline" size="sm" onClick={() => changeFilter("active")}>
-                            Show active jobs
+                        q ? (
+                          <Button variant="outline" size="sm" onClick={() => setQ("")}>
+                            Clear search
                           </Button>
-                        )
+                        ) : null
                       }
                     />
                   </TableCell>
@@ -202,9 +215,6 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
                   }}
                 >
                   <TableCell>
-                    {/* A real link in the primary cell: the row click is a
-                        convenience, but opening a job in a new tab should work
-                        the way it does everywhere else. */}
                     <PrimaryCell
                       title={
                         <Link
@@ -215,17 +225,19 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
                           {job.service.name}
                         </Link>
                       }
-                      subtitle={`${job.customer.full_name} · ${job.vehicle.display_name}`}
+                      subtitle={`${job.customer.full_name}${job.customer.address ? ` · ${job.customer.address}` : ""}`}
                     />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    <span className="text-foreground">
-                      {formatDayLabel(job.scheduled_start, timeZone)}
-                    </span>
+                    <span className="text-foreground">{formatDayLabel(job.scheduled_start, timeZone)}</span>
                     <span className="px-1.5 text-border">·</span>
                     {formatTime(job.scheduled_start, timeZone)}
                   </TableCell>
-                  {isAdmin ? <TableCell>{job.employee.full_name}</TableCell> : null}
+                  {team ? (
+                    <TableCell className={cn(!job.employee && "font-medium text-status-pending")}>
+                      {job.employee?.full_name ?? "Unassigned"}
+                    </TableCell>
+                  ) : null}
                   <TableCell>
                     <JobStatusBadge status={job.status} />
                   </TableCell>
@@ -237,18 +249,7 @@ export function JobsClient({ timeZone, isAdmin }: { timeZone: string; isAdmin: b
             </TableBody>
           </Table>
         </div>
-        {/* The active view is a merged list, so it reports its own size rather
-            than a page position that would not mean anything. */}
-        {isActive ? (
-          jobs.length > 0 ? (
-            <PanelFooter>
-              <p className="text-[12px] text-muted-foreground">
-                <span className="tabular-nums text-foreground">{jobs.length}</span> active{" "}
-                {jobs.length === 1 ? "job" : "jobs"}
-              </p>
-            </PanelFooter>
-          ) : null
-        ) : query.data && query.data.meta.total > 0 ? (
+        {query.data && query.data.meta.total > 0 ? (
           <PanelFooter>
             <PaginationControls meta={query.data.meta} onPageChange={setPage} noun="jobs" />
           </PanelFooter>

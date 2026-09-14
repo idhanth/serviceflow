@@ -35,7 +35,7 @@ import { ServiceFormDialog } from "./service-form-dialog";
 
 const COLUMNS = 6;
 
-export function ServicesClient() {
+export function ServicesClient({ canWrite }: { canWrite: boolean }) {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
@@ -73,15 +73,18 @@ export function ServicesClient() {
         title="Services"
         description="What you offer, what it costs, and how long it takes."
         action={
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="size-4" aria-hidden />
-            Add service
-          </Button>
+          canWrite ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditing(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="size-3.5" aria-hidden />
+              Add service
+            </Button>
+          ) : null
         }
       />
 
@@ -132,7 +135,7 @@ export function ServicesClient() {
                           <Button variant="outline" size="sm" onClick={() => search("")}>
                             Clear search
                           </Button>
-                        ) : (
+                        ) : canWrite ? (
                           <Button
                             size="sm"
                             onClick={() => {
@@ -143,7 +146,7 @@ export function ServicesClient() {
                             <Plus className="size-4" aria-hidden />
                             Add service
                           </Button>
-                        )
+                        ) : null
                       }
                     />
                   </TableCell>
@@ -175,6 +178,7 @@ export function ServicesClient() {
                     <ActiveBadge active={service.active} inactiveLabel="Retired" />
                   </TableCell>
                   <TableCell className="text-right">
+                    {canWrite ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         render={
@@ -215,6 +219,7 @@ export function ServicesClient() {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}

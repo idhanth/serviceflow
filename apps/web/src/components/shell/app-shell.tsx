@@ -11,32 +11,43 @@ import { SidebarNav } from "@/components/shell/sidebar";
 import { UserMenu } from "@/components/shell/user-menu";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import type { Organization, Role, SessionUser } from "@/lib/types";
+import { can, primaryRoleLabel, type Access } from "@/lib/permissions";
+import type { Organization, SessionUser } from "@/lib/types";
 
 interface AppShellProps {
   user: SessionUser;
-  organization: Organization;
-  roles: Role[];
+  organization: Organization | null;
+  access: Access;
   children: React.ReactNode;
 }
 
-function OrganizationBadge({ organization }: { organization: Organization }) {
+/** The business this session is working in - the tenant, named on every screen. */
+function OrganizationBadge({ organization }: { organization: Organization | null }) {
+  const name = organization?.name ?? "ServiceFlow Platform";
   return (
-    <div className="flex items-center gap-2.5 px-1">
+    <div className="flex min-w-0 items-center gap-2.5 px-1">
       <div className="flex size-6 shrink-0 items-center justify-center rounded bg-primary text-[11px] font-semibold text-primary-foreground">
-        {organization.name.slice(0, 1)}
+        {name.slice(0, 1)}
       </div>
-      <p className="min-w-0 truncate text-[13px] font-medium">{organization.name}</p>
+      <div className="min-w-0">
+        <p className="truncate text-[13px] font-medium leading-tight">{name}</p>
+        {organization ? (
+          <p className="truncate text-[11px] leading-tight text-muted-foreground">
+            {organization.timezone.split("/").pop()?.replace("_", " ")} time
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-export function AppShell({ user, organization, roles, children }: AppShellProps) {
+export function AppShell({ user, organization, access, children }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const primaryRole = roles.includes("ADMIN") ? "ADMIN" : (roles[0] ?? "CUSTOMER");
+  const roleLabel = primaryRoleLabel(access);
+  const tenant = organization !== null;
 
   return (
-    <RealtimeProvider>
+    <MaybeRealtime enabled={tenant}>
     <div className="min-h-svh bg-background">
       {/* Desktop sidebar. 232px: wide enough for the longest label, narrow
           enough that the working area keeps the screen. */}
@@ -45,10 +56,10 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
           <OrganizationBadge organization={organization} />
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-4">
-          <SidebarNav roles={roles} />
+          <SidebarNav access={access} />
         </div>
         <div className="border-t p-2">
-          <UserMenu user={user} role={primaryRole} />
+          <UserMenu user={user} role={roleLabel} />
         </div>
       </aside>
 
@@ -57,16 +68,23 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
             anything, status and notifications on the right. Same 48px height as
             the sidebar header, so the two line up across the seam. */}
         <div className="sticky top-0 z-20 hidden h-12 items-center gap-3 border-b bg-background/85 px-6 backdrop-blur lg:flex">
-          {roles.includes("ADMIN") ? (
+          {can(access, "search") ? (
             <div className="w-full max-w-sm">
               <GlobalSearch />
             </div>
           ) : (
-            <span className="text-[13px] text-muted-foreground">{organization.name}</span>
+            <span className="text-[13px] text-muted-foreground">
+              {organization?.name ?? "Platform administration"}
+            </span>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <ConnectionStatus />
-            <NotificationBell />
+            {can(access, "bookings:read") && !can(access, "bookings:write") ? (
+              <span className="rounded border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                Read-only access
+              </span>
+            ) : null}
+            {tenant ? <ConnectionStatus /> : null}
+            {tenant ? <NotificationBell /> : null}
           </div>
         </div>
 
@@ -84,16 +102,18 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
                 <OrganizationBadge organization={organization} />
               </SheetHeader>
               <div className="px-3 py-4">
-                <SidebarNav roles={roles} onNavigate={() => setMobileOpen(false)} />
+                <SidebarNav access={access} onNavigate={() => setMobileOpen(false)} />
               </div>
               <div className="mt-auto border-t p-2">
-                <UserMenu user={user} role={primaryRole} />
+                <UserMenu user={user} role={roleLabel} />
               </div>
             </SheetContent>
           </Sheet>
-          <span className="flex-1 truncate text-[13px] font-medium">{organization.name}</span>
-          <ConnectionStatus />
-          <NotificationBell />
+          <span className="flex-1 truncate text-[13px] font-medium">
+            {organization?.name ?? "Platform"}
+          </span>
+          {tenant ? <ConnectionStatus /> : null}
+          {tenant ? <NotificationBell /> : null}
         </header>
 
         {/* One page frame for the whole product: the same gutters and the same
@@ -103,6 +123,11 @@ export function AppShell({ user, organization, roles, children }: AppShellProps)
         </main>
       </div>
     </div>
-    </RealtimeProvider>
+    </MaybeRealtime>
   );
+}
+
+/** Live updates are per business; a platform session has no channel to join. */
+function MaybeRealtime({ enabled, children }: { enabled: boolean; children: React.ReactNode }) {
+  return enabled ? <RealtimeProvider>{children}</RealtimeProvider> : <>{children}</>;
 }

@@ -34,7 +34,9 @@ const AREAS = [
   { label: "Everything", value: "all", resourceType: undefined },
   { label: "Bookings", value: "booking", resourceType: "booking" },
   { label: "Jobs", value: "job", resourceType: "job" },
+  { label: "Customers", value: "customer", resourceType: "customer" },
   { label: "Team", value: "employee", resourceType: "employee" },
+  { label: "Access", value: "member", resourceType: "member" },
   { label: "Catalog", value: "service", resourceType: "service" },
 ] as const;
 
@@ -72,6 +74,7 @@ const ACTION_VERBS: Record<string, string> = {
   PHOTO_DELETED: "Removed a photo",
   CUSTOMER_CREATED: "Added a customer",
   CUSTOMER_UPDATED: "Updated a customer",
+  CUSTOMER_ARCHIVED: "Archived a customer",
   EMPLOYEE_CREATED: "Added a team member",
   EMPLOYEE_UPDATED: "Updated a team member",
   EMPLOYEE_DEACTIVATED: "Deactivated a team member",
@@ -79,7 +82,12 @@ const ACTION_VERBS: Record<string, string> = {
   SERVICE_CREATED: "Added a service",
   SERVICE_UPDATED: "Updated a service",
   SERVICE_RETIRED: "Retired a service",
-  VEHICLE_ARCHIVED: "Archived a vehicle",
+  USER_INVITED: "Added a member",
+  USER_ROLE_CHANGED: "Changed a member's role",
+  MEMBER_SUSPENDED: "Suspended a member",
+  MEMBER_REACTIVATED: "Reactivated a member",
+  ORGANIZATION_UPDATED: "Updated business settings",
+  TENANT_CREATED: "Created the business",
   AVAILABILITY_UPDATED: "Updated working hours",
   AVAILABILITY_OVERRIDE_SET: "Set a day override",
   AVAILABILITY_OVERRIDE_REMOVED: "Removed a day override",
@@ -93,13 +101,13 @@ function describeAction(action: string): string {
 
 /** Destructive actions read differently; everything else is neutral. */
 function isReversal(action: string): boolean {
-  return /CANCELLED|REJECTED|DELETED|ARCHIVED|DEACTIVATED|RETIRED/.test(action);
+  return /CANCELLED|REJECTED|DELETED|ARCHIVED|DEACTIVATED|RETIRED|SUSPENDED/.test(action);
 }
 
 /**
  * Which metadata keys deserve a word in front of them.
  *
- * Most do not: "Requested a booking · Express Wash · 2022 Lexus RX · Mon, Sep 7
+ * Most do not: "Requested a booking · HVAC Inspection · Sarah Mitchell · Mon, Sep 7
  * at 4:30 PM" needs no labels to be understood, and adding them ("service:",
  * "requested start:") turns a sentence back into a log line.
  */

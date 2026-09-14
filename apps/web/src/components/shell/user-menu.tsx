@@ -58,9 +58,7 @@ export function UserMenu({ user, role }: { user: SessionUser; role: string }) {
           </Avatar>
           <span className="flex min-w-0 flex-col items-start text-left">
             <span className="w-full truncate text-sm font-medium">{user.full_name}</span>
-            <span className="w-full truncate text-xs text-muted-foreground capitalize">
-              {role.toLowerCase()}
-            </span>
+            <span className="w-full truncate text-xs text-muted-foreground">{role}</span>
           </span>
         </>
       </DropdownMenuTrigger>

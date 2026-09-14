@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { navGroupsForRoles } from "@/components/shell/nav-items";
-import type { Role } from "@/lib/types";
+import { navGroupsFor } from "@/components/shell/nav-items";
+import type { Access } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,19 +15,28 @@ import { cn } from "@/lib/utils";
  * accent colour and a left rule rather than a filled pill, so the current place
  * is obvious without the nav shouting.
  */
-export function SidebarNav({ roles, onNavigate }: { roles: Role[]; onNavigate?: () => void }) {
+export function SidebarNav({ access, onNavigate }: { access: Access; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const groups = navGroupsForRoles(roles);
+  const groups = navGroupsFor(access);
+  // The most specific matching link is the current page, so "Book Service"
+  // (/bookings/new) is not also shown as "My Bookings" (/bookings).
+  const current = groups
+    .flatMap((group) => group.items)
+    .filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+  const showGroupLabels = groups.length > 1;
 
   return (
     <nav aria-label="Main" className="flex flex-col gap-5">
       {groups.map((group) => (
         <div key={group.label} className="flex flex-col gap-0.5">
-          <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
-            {group.label}
-          </p>
+          {showGroupLabels ? (
+            <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
+              {group.label}
+            </p>
+          ) : null}
           {group.items.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const active = item.href === current;
             const Icon = item.icon;
             return (
               <Link

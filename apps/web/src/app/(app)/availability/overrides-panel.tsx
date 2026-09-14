@@ -46,7 +46,7 @@ export function OverridesPanel({
 
   const invalidate = [
     queryKeys.availability.all,
-    queryKeys.calendar.all,
+    queryKeys.schedule.all,
     queryKeys.bookings.all,
   ];
 
