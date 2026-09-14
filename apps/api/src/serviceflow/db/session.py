@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -13,11 +14,21 @@ from serviceflow.db.tenancy import allow_cross_tenant
 
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
+# Sync routes run on a thread pool, so the first burst of requests after startup
+# reaches these lazy initialisers concurrently. Without the lock several threads
+# each build an engine - each with its own pool - and the process opens more
+# connections than the pool settings allow. Found by the load test, which saw
+# more PostgreSQL connections than workers x (pool_size + max_overflow).
+_init_lock = threading.Lock()
 
 
 def get_engine() -> Engine:
     global _engine
-    if _engine is None:
+    if _engine is not None:
+        return _engine
+    with _init_lock:
+        if _engine is not None:
+            return _engine
         settings = get_settings()
         _engine = create_engine(
             str(settings.database_url),
@@ -39,10 +50,14 @@ def get_engine() -> Engine:
 
 def get_session_factory() -> sessionmaker[Session]:
     global _session_factory
-    if _session_factory is None:
-        _session_factory = sessionmaker(
-            bind=get_engine(), autoflush=False, expire_on_commit=False, future=True
-        )
+    if _session_factory is not None:
+        return _session_factory
+    engine = get_engine()
+    with _init_lock:
+        if _session_factory is None:
+            _session_factory = sessionmaker(
+                bind=engine, autoflush=False, expire_on_commit=False, future=True
+            )
     return _session_factory
 
 
