@@ -1,53 +1,155 @@
-# Deployment-parity stack. The local machine this was built on has no Docker, so
-# scripts/services.sh runs Postgres and Redis without it; both paths use the same
-# ports, so .env works unchanged either way.
+# The whole ServiceFlow stack, for local development and the smoke test.
+#
+#   docker compose up --build
+#
+#   http://localhost:3000   the app (demo logins on the sign-in page, password demo1234)
+#   http://localhost:8000   the API (OpenAPI at /docs)
+#   http://localhost:8025   Mailpit - every email the worker sends lands here
+#   http://localhost:9001   MinIO console (serviceflow / serviceflow-dev-secret)
+#
+# Every credential below is a local development value, not a secret. Override
+# JWT_SECRET in your shell or a .env file for anything beyond your own machine.
+
+x-api-env: &api-env
+  ENVIRONMENT: local
+  DATABASE_URL: postgresql+psycopg://serviceflow:serviceflow@db:5432/serviceflow
+  DATABASE_POOL_SIZE: "10"
+  DATABASE_MAX_OVERFLOW: "5"
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:-local-development-only-jwt-secret-0123456789}
+  AUTH_PROVIDER: dev
+  CORS_ORIGINS: http://localhost:3000
+  EMAIL_PROVIDER: smtp
+  EMAIL_FROM: ServiceFlow <hello@serviceflow.demo>
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+  S3_BUCKET: serviceflow-media
+  S3_REGION: us-east-1
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+  AWS_ACCESS_KEY_ID: serviceflow
+  AWS_SECRET_ACCESS_KEY: serviceflow-dev-secret
+  # The web container is the only hop in front of the API.
+  TRUSTED_PROXY_COUNT: "1"
+
+x-api-image: &api-image
+  build:
+    context: ./apps/api
+  image: serviceflow-api:local
+
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: serviceflow
-      POSTGRES_PASSWORD: serviceflow
-      POSTGRES_DB: serviceflow
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
     ports: ["5433:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U serviceflow"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U serviceflow -d serviceflow"]
+      interval: 3s
       timeout: 3s
-      retries: 10
+      retries: 30
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", ""]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports: ["6380:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 3s
       timeout: 3s
-      retries: 10
+      retries: 30
 
-  api:
-    build:
-      context: ./apps/api
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025", "1025:1025"]
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      DATABASE_URL: postgresql+psycopg://serviceflow:serviceflow@db:5432/serviceflow
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in your environment}
-      CORS_ORIGINS: http://localhost:3000
-      ENVIRONMENT: local
-    ports: ["8000:8000"]
+      MINIO_ROOT_USER: serviceflow
+      MINIO_ROOT_PASSWORD: serviceflow-dev-secret
+    volumes: ["miniodata:/data"]
+    ports: ["9000:9000", "9001:9001"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: >
+      sh -c "mc alias set local http://minio:9000 serviceflow serviceflow-dev-secret &&
+             mc mb --ignore-existing local/serviceflow-media"
+    restart: "no"
+
+  # Schema first, then demo data. Both are one-shot and safe to rerun: the seed
+  # tops up rather than duplicating.
+  migrate:
+    <<: *api-image
+    environment: *api-env
+    command: ["alembic", "upgrade", "head"]
     depends_on:
       db: {condition: service_healthy}
+    restart: "no"
+
+  seed:
+    <<: *api-image
+    environment: *api-env
+    command: ["python", "-m", "serviceflow.db.seed"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+    restart: "no"
+
+  api:
+    <<: *api-image
+    environment: *api-env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  # Delivers email and reminders. The API never waits on it: a stopped worker
+  # delays mail, which the outbox sweep catches up on when it returns.
+  worker:
+    <<: *api-image
+    environment: *api-env
+    command: ["celery", "-A", "serviceflow.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A serviceflow.worker.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  beat:
+    <<: *api-image
+    environment: *api-env
+    command: ["celery", "-A", "serviceflow.worker.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
 
   web:
     build:
       context: ./apps/web
+    image: serviceflow-web:local
     environment:
       API_URL: http://api:8000
-      NEXT_PUBLIC_API_URL: http://localhost:8000
     ports: ["3000:3000"]
-    depends_on: [api]
+    depends_on:
+      api: {condition: service_healthy}
 
 volumes:
   pgdata:
+  miniodata:
