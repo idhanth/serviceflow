@@ -175,8 +175,12 @@ jobs:
         run: docker compose up --build -d
       - name: Wait for the one-shot setup containers
         run: |
+          # Poll until each has exited: a running container also reports exit code 0.
           for service in migrate minio-init seed; do
-            docker compose wait "$service" || true
+            for _ in $(seq 1 120); do
+              [ "$(docker compose ps -a --format '{{.State}}' "$service")" = "exited" ] && break
+              sleep 5
+            done
             code="$(docker compose ps -a --format '{{.ExitCode}}' "$service")"
             echo "$service exited with $code"
             [ "$code" = "0" ] || { docker compose logs "$service"; exit 1; }
