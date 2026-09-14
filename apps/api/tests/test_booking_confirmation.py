@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -295,9 +297,11 @@ def test_rescheduling_moves_the_job_window_too(
     assert data["requested_start"] == data["job"]["scheduled_start"]
     assert data["requested_end"] == data["job"]["scheduled_end"]
 
+    # Compare instants, not strings: the same moment can be written "Z" or "+00:00".
     job = db.query(Job).filter_by(booking_id=booking.id).one()
     db.refresh(job)
-    assert job.scheduled_start.isoformat() == data["job"]["scheduled_start"]
+    assert job.scheduled_start == datetime.fromisoformat(data["job"]["scheduled_start"])
+    assert data["job"]["scheduled_start"].endswith("Z")
 
 
 def test_a_started_job_blocks_reschedule_and_cancel(

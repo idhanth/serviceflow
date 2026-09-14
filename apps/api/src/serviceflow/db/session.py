@@ -42,6 +42,12 @@ def get_engine() -> Engine:
             pool_timeout=settings.database_pool_timeout,
             pool_recycle=settings.database_pool_recycle,
             pool_pre_ping=True,
+            # Timestamps leave the API in UTC whatever the server's own TimeZone
+            # setting is. Without this a server configured for local time hands
+            # back local offsets, and the same instant serialises as "-04:00"
+            # on one machine and "Z" on another. Business-timezone conversion
+            # happens explicitly in the service layer, never in the session.
+            connect_args={"options": "-c timezone=UTC"},
             echo=settings.database_echo,
             future=True,
         )
