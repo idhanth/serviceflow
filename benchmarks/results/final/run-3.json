@@ -1,0 +1,146 @@
+{
+  "benchmark": "load_test",
+  "scenario": "mixed staff workload: 25% GET /bookings, 20% GET /jobs, 15% GET /customers, 15% GET /schedule, 10% POST /bookings, 10% PATCH /jobs, 5% GET /dashboard",
+  "generated_at": "2026-09-14T19:45:37+00:00",
+  "git_commit": "ebc247e",
+  "results": {
+    "requests_per_second": 380.5,
+    "total_requests": 24218,
+    "iterations": 23968,
+    "latency_ms": {
+      "avg": 248.1,
+      "p50": 209.8,
+      "p90": 417.0,
+      "p95": 533.2,
+      "p99": 792.8,
+      "max": 1735.9
+    },
+    "error_rate": 0,
+    "failed_requests": 0,
+    "checks": {
+      "GET /jobs 200": {
+        "passes": 4790,
+        "fails": 0
+      },
+      "GET /bookings 200": {
+        "passes": 6059,
+        "fails": 0
+      },
+      "GET /customers 200": {
+        "passes": 3627,
+        "fails": 0
+      },
+      "GET /schedule 200": {
+        "passes": 3605,
+        "fails": 0
+      },
+      "PATCH /jobs 200": {
+        "passes": 2388,
+        "fails": 0
+      },
+      "POST /bookings 201": {
+        "passes": 2320,
+        "fails": 0
+      },
+      "GET /dashboard 200": {
+        "passes": 1179,
+        "fails": 0
+      }
+    }
+  },
+  "per_endpoint_latency_ms": {
+    "GET /bookings": {
+      "p50": 191.7,
+      "p95": 476.6,
+      "p99": 724.3
+    },
+    "GET /customers": {
+      "p50": 191.8,
+      "p95": 489.5,
+      "p99": 728.9
+    },
+    "GET /dashboard": {
+      "p50": 254.3,
+      "p95": 572.8,
+      "p99": 763.9
+    },
+    "GET /jobs": {
+      "p50": 186.4,
+      "p95": 466.4,
+      "p99": 703.9
+    },
+    "GET /schedule": {
+      "p50": 193.3,
+      "p95": 444.8,
+      "p99": 698.9
+    },
+    "PATCH /jobs": {
+      "p50": 268.6,
+      "p95": 663.1,
+      "p99": 1041.6
+    },
+    "POST /bookings": {
+      "p50": 298.6,
+      "p95": 693.6,
+      "p99": 982.4
+    }
+  },
+  "database_connections": {
+    "peak_total": 61,
+    "peak_active": 9,
+    "peak_waiting_on_lock": 0,
+    "mean_active": 4.2,
+    "postgres_max_connections": 100,
+    "samples": 64
+  },
+  "configuration": {
+    "virtual_users": 100,
+    "duration": "60s",
+    "measured_wall_seconds": 63.8,
+    "think_time": "none (closed loop)",
+    "uvicorn_workers": 4,
+    "pool": {
+      "pool_size": 10,
+      "max_overflow": 5,
+      "pool_timeout_seconds": 5,
+      "pool_recycle_seconds": 1800,
+      "pool_pre_ping": true,
+      "max_connections_from_api": 60
+    },
+    "rate_limiting": "off (the limiter is tested separately)",
+    "logging": "JSON access and event logs at INFO, as in the Docker stack",
+    "celery_broker": "in-memory (email dispatch is asynchronous and not part of the request path)"
+  },
+  "dataset": {
+    "tenants": 25,
+    "users": 10575,
+    "technicians": 500,
+    "customers": 10000,
+    "services": 200,
+    "bookings": 50000,
+    "jobs": 50000,
+    "database_row_counts": {
+      "organizations": 25,
+      "employees": 500,
+      "customers": 10000,
+      "services": 200,
+      "bookings": 50000,
+      "jobs": 50000
+    }
+  },
+  "environment": {
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "arch": "arm64",
+      "logical_cpus": 10,
+      "cpu": "Apple M5",
+      "memory_gb": 16
+    },
+    "postgres_version": "16.15",
+    "redis_version": "8.10.1",
+    "k6": "k6 v1.4.0 (commit/a9f9e3b28a, go1.25.4, darwin/arm64)",
+    "python": "3.12.13",
+    "topology": "API, PostgreSQL, Redis and k6 on the same machine"
+  },
+  "raw_summary": "benchmarks/results/raw/load_final-3_100vu_20260914T194432Z.json"
+}

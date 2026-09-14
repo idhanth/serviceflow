@@ -50,6 +50,11 @@ def n(value: float | int) -> str:
     return f"{value:,}" if isinstance(value, int) else f"{value:,.1f}"
 
 
+def errors(res: dict[str, Any]) -> str:
+    """Error rate with the raw count, so a small non-zero rate never reads as a clean 0.00%."""
+    return f"{res['error_rate'] * 100:.2f}% ({n(int(res['failed_requests']))})"
+
+
 def isolation_summary(r: dict[str, Any]) -> str:
     s = r["summary"]
     violations = sum(r["database_invariants_violations"].values())
@@ -90,10 +95,10 @@ def load_summary(r: dict[str, Any]) -> str:
     machine = env["machine"]
     return "\n".join(
         [
-            "| Throughput | p50 | p95 | p99 | Error rate | Requests |",
+            "| Throughput | p50 | p95 | p99 | Error rate (failed requests) | Requests |",
             "| ---: | ---: | ---: | ---: | ---: | ---: |",
             f"| {n(res['requests_per_second'])} req/s | {n(lat['p50'])} ms | {n(lat['p95'])} ms "
-            f"| {n(lat['p99'])} ms | {res['error_rate'] * 100:.2f}% | {n(res['total_requests'])} |",
+            f"| {n(lat['p99'])} ms | {errors(res)} | {n(res['total_requests'])} |",
             "",
             f"{cfg['virtual_users']} concurrent virtual users for {cfg['duration']}, no think time, against "
             f"{n(r['dataset']['tenants'])} tenants, {n(r['dataset']['bookings'])} bookings and "
@@ -142,7 +147,7 @@ def load_configuration(r: dict[str, Any]) -> str:
 
 def load_tuning(runs: list[dict[str, Any]], chosen: dict[str, Any] | None) -> str:
     rows = [
-        "| Workers | Pool per worker | Max API connections | Throughput | p50 | p95 | p99 | Errors | Peak connections |",
+        "| Workers | Pool per worker | Max API connections | Throughput | p50 | p95 | p99 | Errors (failed requests) | Peak connections |",
         "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
@@ -156,7 +161,7 @@ def load_tuning(runs: list[dict[str, Any]], chosen: dict[str, Any] | None) -> st
         rows.append(
             f"| {cfg['uvicorn_workers']} | {pool['pool_size']} + {pool['max_overflow']} | {pool['max_connections_from_api']} "
             f"| {n(res['requests_per_second'])} req/s | {n(lat['p50'])} ms | {n(lat['p95'])} ms | {n(lat['p99'])} ms "
-            f"| {res['error_rate'] * 100:.2f}% | {r['database_connections']['peak_total']} |"
+            f"| {errors(res)} | {r['database_connections']['peak_total']} |"
         )
     first = runs[0]["configuration"] if runs else None
     if first:
@@ -169,14 +174,14 @@ def load_tuning(runs: list[dict[str, Any]], chosen: dict[str, Any] | None) -> st
         pool = chosen["configuration"]["pool"]
         rows[-1] += (
             f" The headline result uses {chosen['configuration']['uvicorn_workers']} workers with a pool of "
-            f"{pool['pool_size']} + {pool['max_overflow']}, measured again in its own run."
+            f"{pool['pool_size']} + {pool['max_overflow']}, measured again in separate runs."
         )
     return "\n".join(rows)
 
 
 def load_repeats(runs: list[tuple[str, dict[str, Any]]], chosen: dict[str, Any] | None) -> str:
     rows = [
-        "| Run | Throughput | p50 | p95 | p99 | Errors | Requests | Peak connections | Published |",
+        "| Run | Throughput | p50 | p95 | p99 | Errors (failed requests) | Requests | Peak connections | Published |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |",
     ]
     for name, r in runs:
@@ -184,7 +189,7 @@ def load_repeats(runs: list[tuple[str, dict[str, Any]]], chosen: dict[str, Any] 
         published = "yes" if chosen and r["raw_summary"] == chosen["raw_summary"] else ""
         rows.append(
             f"| {name} | {n(res['requests_per_second'])} req/s | {n(lat['p50'])} ms | {n(lat['p95'])} ms "
-            f"| {n(lat['p99'])} ms | {res['error_rate'] * 100:.2f}% | {n(res['total_requests'])} "
+            f"| {n(lat['p99'])} ms | {errors(res)} | {n(res['total_requests'])} "
             f"| {r['database_connections']['peak_total']} | {published} |"
         )
     return "\n".join(rows)

@@ -1,11 +1,11 @@
 {
   "benchmark": "tenant_isolation",
-  "generated_at": "2026-09-14T19:22:12+00:00",
-  "git_commit": "cc5cc65",
+  "generated_at": "2026-09-14T19:46:03+00:00",
+  "git_commit": "ebc247e",
   "passed": true,
   "summary": {
-    "attempted": 3057,
-    "blocked": 3057,
+    "attempted": 3061,
+    "blocked": 3061,
     "unexpected_successes": 0,
     "server_errors": 0,
     "block_rate": 1.0
@@ -91,13 +91,13 @@
     },
     "unauthorized_role": {
       "description": "An action the caller's role does not grant.",
-      "attempted": 393,
-      "blocked": 393,
+      "attempted": 397,
+      "blocked": 397,
       "unexpected_successes": 0,
       "server_errors": 0,
       "refusals": {
         "INVALID_ROLE": 324,
-        "NOT_FOUND": 69
+        "NOT_FOUND": 73
       },
       "examples_of_failures": []
     },
@@ -153,5 +153,5 @@
     "machine": "arm64",
     "cpu_count": 10
   },
-  "duration_seconds": 9.4
+  "duration_seconds": 4.9
 }

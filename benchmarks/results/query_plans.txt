@@ -1,0 +1,951 @@
+Query plans for the load test's endpoints, captured by benchmarks/load/explain_queries.py
+against the load dataset (50,000 bookings, 25 tenants), as tenant load-tenant-00's dispatcher, on 2026-09-14T19:46:06+00:00.
+Timings in these plans come from one execution and are not benchmark results.
+
+-- GET /bookings  (bookings?page=2&page_size=25&status=CONFIRMED)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.009..0.010 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.004..0.004 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.004..0.005 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.086 ms
+Execution Time: 0.020 ms
+
+-- GET /bookings  (bookings?page=2&page_size=25&status=CONFIRMED)
+-- SELECT count(*) AS count_1 FROM bookings WHERE bookings.organization_id = %(organization_id_1)s::UUID AND bookings.status = %(status_1)s
+Aggregate  (cost=388.41..388.42 rows=1 width=8) (actual time=0.449..0.449 rows=1 loops=1)
+  Buffers: shared hit=41
+  ->  Index Only Scan using ix_bookings_organization_id_status on bookings  (cost=0.29..388.33 rows=31 width=0) (actual time=0.044..0.407 rows=1862 loops=1)
+        Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'CONFIRMED'::booking_status))
+        Rows Removed by Filter: 232
+        Heap Fetches: 94
+        Buffers: shared hit=41
+Planning Time: 0.055 ms
+Execution Time: 0.455 ms
+
+-- GET /bookings  (bookings?page=2&page_size=25&status=CONFIRMED)
+-- SELECT bookings.customer_id, bookings.service_id, bookings.requested_start, bookings.requested_end, bookings.status, bookings.customer_notes, bookings.admin_notes, bookings.id, bookings.organization_id, bookings.created_at, bookings.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_4, users_2.created_at AS created_at_4, users_2.updated_at AS updated_at_4, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_5, employees_1.organization_id AS organization_id_3, employees_1.created_at AS created_at_5, employees_1.updated_at AS updated_at_5, jobs_1.booking_id, jobs_1.employee_id, jobs_1.scheduled_start, jobs_1.scheduled_end, jobs_1.status AS status_1, jobs_1.started_at, jobs_1.completed_at, jobs_1.internal_notes, jobs_1.id AS id_6, jobs_1.organization_id AS organization_id_4, jobs_1.created_at AS created_at_6, jobs_1.updated_at AS updated_at_6 FROM bookings LEFT OUTER JOIN customers AS customers_1 ON bookings.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings.service_id = services_1.id LEFT OUTER JOIN jobs AS jobs_1 ON bookings.id = jobs_1.booking_id LEFT OUTER JOIN employees AS employees_1 ON jobs_1.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE bookings.organization_id = %(organization_id_5)s::UUID AND bookings.status = %(status_2)s ORDER BY bookings.requested_start DESC, bookings.id ASC LIMIT %(param_1)s::INTEGER OFFSET %(param_2)s::INTEGER
+Limit  (cost=1793.62..1793.64 rows=6 width=1385) (actual time=12.430..12.433 rows=25 loops=1)
+  Buffers: shared hit=22478
+  ->  Sort  (cost=1793.56..1793.64 rows=31 width=1385) (actual time=12.428..12.431 rows=50 loops=1)
+        Sort Key: bookings.requested_start DESC, bookings.id
+        Sort Method: top-N heapsort  Memory: 117kB
+        Buffers: shared hit=22478
+        ->  Nested Loop Left Join  (cost=29.74..1792.79 rows=31 width=1385) (actual time=0.084..11.001 rows=1862 loops=1)
+              Buffers: shared hit=22478
+              ->  Nested Loop Left Join  (cost=29.44..1619.11 rows=31 width=1020) (actual time=0.077..10.305 rows=1862 loops=1)
+                    Buffers: shared hit=22418
+                    ->  Nested Loop Left Join  (cost=29.17..1608.91 rows=31 width=938) (actual time=0.072..8.462 rows=1862 loops=1)
+                          Buffers: shared hit=16832
+                          ->  Nested Loop Left Join  (cost=28.88..1354.83 rows=31 width=790) (actual time=0.065..5.725 rows=1862 loops=1)
+                                Join Filter: (bookings.service_id = services_1.id)
+                                Rows Removed by Join Filter: 5298
+                                Buffers: shared hit=11246
+                                ->  Nested Loop Left Join  (cost=28.88..1342.12 rows=31 width=649) (actual time=0.058..4.848 rows=1862 loops=1)
+                                      Buffers: shared hit=11245
+                                      ->  Nested Loop Left Join  (cost=28.60..1251.65 rows=31 width=284) (actual time=0.053..3.064 rows=1862 loops=1)
+                                            Buffers: shared hit=5659
+                                            ->  Bitmap Heap Scan on bookings  (cost=28.31..1033.70 rows=31 width=164) (actual time=0.047..0.878 rows=1862 loops=1)
+                                                  Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                                  Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'CONFIRMED'::booking_status))
+                                                  Rows Removed by Filter: 232
+                                                  Heap Blocks: exact=70
+                                                  Buffers: shared hit=73
+                                                  ->  Bitmap Index Scan on ix_bookings_organization_id  (cost=0.00..28.30 rows=2135 width=0) (actual time=0.033..0.034 rows=2094 loops=1)
+                                                        Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                                        Buffers: shared hit=3
+                                            ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..7.03 rows=1 width=120) (actual time=0.001..0.001 rows=1 loops=1862)
+                                                  Index Cond: (id = bookings.customer_id)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                                  Buffers: shared hit=5586
+                                      ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=1862)
+                                            Index Cond: (id = customers_1.user_id)
+                                            Buffers: shared hit=5586
+                                ->  Materialize  (cost=0.00..8.54 rows=9 width=141) (actual time=0.000..0.000 rows=4 loops=1862)
+                                      Buffers: shared hit=1
+                                      ->  Seq Scan on services services_1  (cost=0.00..8.50 rows=9 width=141) (actual time=0.004..0.007 rows=8 loops=1)
+                                            Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                            Buffers: shared hit=1
+                          ->  Index Scan using one_job_per_booking on jobs jobs_1  (cost=0.29..8.20 rows=1 width=148) (actual time=0.001..0.001 rows=1 loops=1862)
+                                Index Cond: (booking_id = bookings.id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                Buffers: shared hit=5586
+                    ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..0.33 rows=1 width=82) (actual time=0.001..0.001 rows=1 loops=1862)
+                          Index Cond: (id = jobs_1.employee_id)
+                          Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                          Buffers: shared hit=5586
+              ->  Memoize  (cost=0.30..7.77 rows=1 width=365) (actual time=0.000..0.000 rows=1 loops=1862)
+                    Cache Key: employees_1.user_id
+                    Cache Mode: logical
+                    Hits: 1842  Misses: 20  Evictions: 0  Overflows: 0  Memory Usage: 5kB
+                    Buffers: shared hit=60
+                    ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=20)
+                          Index Cond: (id = employees_1.user_id)
+                          Buffers: shared hit=60
+Planning:
+  Buffers: shared hit=98
+Planning Time: 1.165 ms
+Execution Time: 12.511 ms
+
+-- GET /bookings (upcoming)  (bookings?page=1&page_size=25&timeframe=upcoming)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.007..0.008 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.004..0.004 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.002..0.003 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.069 ms
+Execution Time: 0.015 ms
+
+-- GET /bookings (upcoming)  (bookings?page=1&page_size=25&timeframe=upcoming)
+-- SELECT count(*) AS count_1 FROM bookings WHERE bookings.organization_id = %(organization_id_1)s::UUID AND bookings.requested_start >= %(requested_start_1)s::TIMESTAMP WITH TIME ZONE AND bookings.status IN (%(status_1_1)s, %(status_1_2)s) AND NOT (EXISTS (SELECT jobs.id FROM jobs WHERE jobs.booking_id = bookings.id AND jobs.status IN (%(status_2_1)s, %(status_2_2)s)))
+Aggregate  (cost=502.66..502.67 rows=1 width=8) (actual time=0.380..0.380 rows=1 loops=1)
+  Buffers: shared hit=867
+  ->  Nested Loop Anti Join  (cost=86.94..502.65 rows=6 width=0) (actual time=0.042..0.373 rows=226 loops=1)
+        Buffers: shared hit=867
+        ->  Bitmap Heap Scan on bookings  (cost=86.65..444.65 rows=6 width=16) (actual time=0.037..0.118 rows=260 loops=1)
+              Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-14 15:46:06.674886-04'::timestamp with time zone) AND (status = ANY ('{PENDING,CONFIRMED}'::booking_status[])))
+              Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+              Heap Blocks: exact=58
+              Buffers: shared hit=87
+              ->  Bitmap Index Scan on uq_bookings_no_duplicate_open  (cost=0.00..86.65 rows=129 width=0) (actual time=0.032..0.032 rows=260 loops=1)
+                    Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-14 15:46:06.674886-04'::timestamp with time zone))
+                    Buffers: shared hit=29
+        ->  Index Scan using one_job_per_booking on jobs  (cost=0.29..8.33 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=260)
+              Index Cond: (booking_id = bookings.id)
+              Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = ANY ('{COMPLETED,CANCELLED}'::job_status[])))
+              Rows Removed by Filter: 1
+              Buffers: shared hit=780
+Planning:
+  Buffers: shared hit=14
+Planning Time: 0.117 ms
+Execution Time: 0.390 ms
+
+-- GET /bookings (upcoming)  (bookings?page=1&page_size=25&timeframe=upcoming)
+-- SELECT bookings.customer_id, bookings.service_id, bookings.requested_start, bookings.requested_end, bookings.status, bookings.customer_notes, bookings.admin_notes, bookings.id, bookings.organization_id, bookings.created_at, bookings.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_4, users_2.created_at AS created_at_4, users_2.updated_at AS updated_at_4, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_5, employees_1.organization_id AS organization_id_3, employees_1.created_at AS created_at_5, employees_1.updated_at AS updated_at_5, jobs_1.booking_id, jobs_1.employee_id, jobs_1.scheduled_start, jobs_1.scheduled_end, jobs_1.status AS status_1, jobs_1.started_at, jobs_1.completed_at, jobs_1.internal_notes, jobs_1.id AS id_6, jobs_1.organization_id AS organization_id_4, jobs_1.created_at AS created_at_6, jobs_1.updated_at AS updated_at_6 FROM bookings LEFT OUTER JOIN customers AS customers_1 ON bookings.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings.service_id = services_1.id LEFT OUTER JOIN jobs AS jobs_1 ON bookings.id = jobs_1.booking_id LEFT OUTER JOIN employees AS employees_1 ON jobs_1.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE bookings.organization_id = %(organization_id_5)s::UUID AND bookings.requested_start >= %(requested_start_1)s::TIMESTAMP WITH TIME ZONE AND bookings.status IN (%(status_2_1)s, %(status_2_2)s) AND NOT (EXISTS (SELECT jobs.id FROM jobs WHERE jobs.booking_id = bookings.id AND jobs.status IN (%(status_3_1)s, %(status_3_2)s))) ORDER BY bookings.requested_start ASC, bookings.id ASC LIMIT %(param_1)s::INTEGER OFFSET %(param_2)s::INTEGER
+Limit  (cost=678.01..678.02 rows=6 width=1385) (actual time=2.279..2.282 rows=25 loops=1)
+  Buffers: shared hit=4072
+  ->  Sort  (cost=678.01..678.02 rows=6 width=1385) (actual time=2.278..2.280 rows=25 loops=1)
+        Sort Key: bookings.requested_start, bookings.id
+        Sort Method: top-N heapsort  Memory: 68kB
+        Buffers: shared hit=4072
+        ->  Nested Loop Anti Join  (cost=88.35..677.93 rows=6 width=1385) (actual time=0.090..2.095 rows=226 loops=1)
+              Buffers: shared hit=4072
+              ->  Nested Loop Left Join  (cost=88.06..619.93 rows=6 width=1385) (actual time=0.085..1.748 rows=260 loops=1)
+                    Buffers: shared hit=3292
+                    ->  Nested Loop Left Join  (cost=87.78..573.38 rows=6 width=1020) (actual time=0.080..1.566 rows=260 loops=1)
+                          Buffers: shared hit=2860
+                          ->  Nested Loop Left Join  (cost=87.51..571.40 rows=6 width=938) (actual time=0.075..1.362 rows=260 loops=1)
+                                Buffers: shared hit=2428
+                                ->  Nested Loop Left Join  (cost=87.22..521.45 rows=6 width=790) (actual time=0.071..0.970 rows=260 loops=1)
+                                      Join Filter: (bookings.service_id = services_1.id)
+                                      Rows Removed by Join Filter: 805
+                                      Buffers: shared hit=1648
+                                      ->  Nested Loop Left Join  (cost=87.22..512.11 rows=6 width=649) (actual time=0.064..0.826 rows=260 loops=1)
+                                            Buffers: shared hit=1647
+                                            ->  Nested Loop Left Join  (cost=86.93..494.60 rows=6 width=284) (actual time=0.059..0.536 rows=260 loops=1)
+                                                  Buffers: shared hit=867
+                                                  ->  Bitmap Heap Scan on bookings  (cost=86.65..444.65 rows=6 width=164) (actual time=0.054..0.178 rows=260 loops=1)
+                                                        Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-14 15:46:06.674886-04'::timestamp with time zone) AND (status = ANY ('{PENDING,CONFIRMED}'::booking_status[])))
+                                                        Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                                        Heap Blocks: exact=58
+                                                        Buffers: shared hit=87
+                                                        ->  Bitmap Index Scan on uq_bookings_no_duplicate_open  (cost=0.00..86.65 rows=129 width=0) (actual time=0.047..0.047 rows=260 loops=1)
+                                                              Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-14 15:46:06.674886-04'::timestamp with time zone))
+                                                              Buffers: shared hit=29
+                                                  ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..8.32 rows=1 width=120) (actual time=0.001..0.001 rows=1 loops=260)
+                                                        Index Cond: (id = bookings.customer_id)
+                                                        Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                                        Buffers: shared hit=780
+                                            ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=260)
+                                                  Index Cond: (id = customers_1.user_id)
+                                                  Buffers: shared hit=780
+                                      ->  Materialize  (cost=0.00..8.54 rows=9 width=141) (actual time=0.000..0.000 rows=4 loops=260)
+                                            Buffers: shared hit=1
+                                            ->  Seq Scan on services services_1  (cost=0.00..8.50 rows=9 width=141) (actual time=0.004..0.006 rows=8 loops=1)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                                  Buffers: shared hit=1
+                                ->  Index Scan using one_job_per_booking on jobs jobs_1  (cost=0.29..8.32 rows=1 width=148) (actual time=0.001..0.001 rows=1 loops=260)
+                                      Index Cond: (booking_id = bookings.id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                      Buffers: shared hit=780
+                          ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..0.33 rows=1 width=82) (actual time=0.001..0.001 rows=1 loops=260)
+                                Index Cond: (id = jobs_1.employee_id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                Buffers: shared hit=432
+                    ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (actual time=0.000..0.000 rows=1 loops=260)
+                          Index Cond: (id = employees_1.user_id)
+                          Buffers: shared hit=432
+              ->  Index Scan using one_job_per_booking on jobs  (cost=0.29..8.33 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=260)
+                    Index Cond: (booking_id = bookings.id)
+                    Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = ANY ('{COMPLETED,CANCELLED}'::job_status[])))
+                    Rows Removed by Filter: 1
+                    Buffers: shared hit=780
+Planning:
+  Buffers: shared hit=112
+Planning Time: 2.593 ms
+Execution Time: 2.352 ms
+
+-- GET /jobs  (jobs?page=1&page_size=25&status=SCHEDULED&timeframe=upcoming)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.004..0.004 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.002..0.002 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.001..0.001 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.049 ms
+Execution Time: 0.009 ms
+
+-- GET /jobs  (jobs?page=1&page_size=25&status=SCHEDULED&timeframe=upcoming)
+-- SELECT count(*) AS count_1 FROM jobs WHERE jobs.organization_id = %(organization_id_1)s::UUID AND jobs.status = %(status_1)s AND jobs.scheduled_end >= %(scheduled_end_1)s::TIMESTAMP WITH TIME ZONE
+Aggregate  (cost=1120.52..1120.53 rows=1 width=8) (actual time=0.189..0.189 rows=1 loops=1)
+  Buffers: shared hit=80
+  ->  Bitmap Heap Scan on jobs  (cost=28.57..1120.52 rows=2 width=0) (actual time=0.027..0.186 rows=107 loops=1)
+        Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Filter: ((scheduled_end >= '2026-09-14 15:46:06.703669-04'::timestamp with time zone) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'SCHEDULED'::job_status))
+        Rows Removed by Filter: 1987
+        Heap Blocks: exact=77
+        Buffers: shared hit=80
+        ->  Bitmap Index Scan on ix_jobs_organization_id  (cost=0.00..28.56 rows=2170 width=0) (actual time=0.018..0.018 rows=2145 loops=1)
+              Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+              Buffers: shared hit=3
+Planning Time: 0.036 ms
+Execution Time: 0.194 ms
+
+-- GET /jobs  (jobs?page=1&page_size=25&status=SCHEDULED&timeframe=upcoming)
+-- SELECT jobs.booking_id, jobs.employee_id, jobs.scheduled_start, jobs.scheduled_end, jobs.status, jobs.started_at, jobs.completed_at, jobs.internal_notes, jobs.id, jobs.organization_id, jobs.created_at, jobs.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, bookings_1.customer_id, bookings_1.service_id, bookings_1.requested_start, bookings_1.requested_end, bookings_1.status AS status_1, bookings_1.customer_notes, bookings_1.admin_notes, bookings_1.id AS id_4, bookings_1.organization_id AS organization_id_3, bookings_1.created_at AS created_at_4, bookings_1.updated_at AS updated_at_4, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_5, users_2.created_at AS created_at_5, users_2.updated_at AS updated_at_5, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_6, employees_1.organization_id AS organization_id_4, employees_1.created_at AS created_at_6, employees_1.updated_at AS updated_at_6 FROM jobs LEFT OUTER JOIN bookings AS bookings_1 ON jobs.booking_id = bookings_1.id LEFT OUTER JOIN customers AS customers_1 ON bookings_1.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings_1.service_id = services_1.id LEFT OUTER JOIN employees AS employees_1 ON jobs.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE jobs.organization_id = %(organization_id_5)s::UUID AND jobs.status = %(status_2)s AND jobs.scheduled_end >= %(scheduled_end_1)s::TIMESTAMP WITH TIME ZONE ORDER BY jobs.scheduled_start ASC, jobs.id ASC LIMIT %(param_1)s::INTEGER OFFSET %(param_2)s::INTEGER
+Limit  (cost=1176.83..1176.84 rows=2 width=1385) (actual time=0.874..0.878 rows=25 loops=1)
+  Buffers: shared hit=1899
+  ->  Sort  (cost=1176.83..1176.84 rows=2 width=1385) (actual time=0.874..0.876 rows=25 loops=1)
+        Sort Key: jobs.scheduled_start, jobs.id
+        Sort Method: top-N heapsort  Memory: 65kB
+        Buffers: shared hit=1899
+        ->  Nested Loop Left Join  (cost=30.13..1176.82 rows=2 width=1385) (actual time=0.037..0.801 rows=107 loops=1)
+              Buffers: shared hit=1899
+              ->  Nested Loop Left Join  (cost=29.98..1176.43 rows=2 width=1244) (actual time=0.036..0.716 rows=107 loops=1)
+                    Buffers: shared hit=1685
+                    ->  Nested Loop Left Join  (cost=29.70..1170.60 rows=2 width=879) (actual time=0.034..0.627 rows=107 loops=1)
+                          Buffers: shared hit=1364
+                          ->  Nested Loop Left Join  (cost=29.41..1169.32 rows=2 width=759) (actual time=0.032..0.519 rows=107 loops=1)
+                                Buffers: shared hit=1043
+                                ->  Nested Loop Left Join  (cost=29.12..1152.67 rows=2 width=595) (actual time=0.029..0.392 rows=107 loops=1)
+                                      Buffers: shared hit=722
+                                      ->  Bitmap Heap Scan on jobs  (cost=28.57..1120.52 rows=2 width=148) (actual time=0.025..0.216 rows=107 loops=1)
+                                            Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                            Filter: ((scheduled_end >= '2026-09-14 15:46:06.703669-04'::timestamp with time zone) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'SCHEDULED'::job_status))
+                                            Rows Removed by Filter: 1987
+                                            Heap Blocks: exact=77
+                                            Buffers: shared hit=80
+                                            ->  Bitmap Index Scan on ix_jobs_organization_id  (cost=0.00..28.56 rows=2170 width=0) (actual time=0.017..0.017 rows=2145 loops=1)
+                                                  Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                                  Buffers: shared hit=3
+                                      ->  Nested Loop Left Join  (cost=0.56..16.07 rows=1 width=447) (actual time=0.001..0.001 rows=1 loops=107)
+                                            Buffers: shared hit=642
+                                            ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..8.31 rows=1 width=82) (actual time=0.001..0.001 rows=1 loops=107)
+                                                  Index Cond: (id = jobs.employee_id)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                                  Buffers: shared hit=321
+                                            ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=107)
+                                                  Index Cond: (id = employees_1.user_id)
+                                                  Buffers: shared hit=321
+                                ->  Index Scan using pk_bookings on bookings bookings_1  (cost=0.29..8.32 rows=1 width=164) (actual time=0.001..0.001 rows=1 loops=107)
+                                      Index Cond: (id = jobs.booking_id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                      Buffers: shared hit=321
+                          ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..0.64 rows=1 width=120) (actual time=0.001..0.001 rows=1 loops=107)
+                                Index Cond: (id = bookings_1.customer_id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                Buffers: shared hit=321
+                    ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=107)
+                          Index Cond: (id = customers_1.user_id)
+                          Buffers: shared hit=321
+              ->  Index Scan using pk_services on services services_1  (cost=0.14..0.19 rows=1 width=141) (actual time=0.001..0.001 rows=1 loops=107)
+                    Index Cond: (id = bookings_1.service_id)
+                    Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                    Buffers: shared hit=214
+Planning:
+  Buffers: shared hit=102
+Planning Time: 0.678 ms
+Execution Time: 0.910 ms
+
+-- GET /jobs (needs technician)  (jobs?page=1&page_size=25&status=NEW&timeframe=upcoming)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.006..0.007 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.004..0.004 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.002..0.003 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.068 ms
+Execution Time: 0.013 ms
+
+-- GET /jobs (needs technician)  (jobs?page=1&page_size=25&status=NEW&timeframe=upcoming)
+-- SELECT count(*) AS count_1 FROM jobs WHERE jobs.organization_id = %(organization_id_1)s::UUID AND jobs.status = %(status_1)s AND jobs.scheduled_end >= %(scheduled_end_1)s::TIMESTAMP WITH TIME ZONE
+Aggregate  (cost=1120.52..1120.53 rows=1 width=8) (actual time=0.207..0.207 rows=1 loops=1)
+  Buffers: shared hit=80
+  ->  Bitmap Heap Scan on jobs  (cost=28.57..1120.52 rows=2 width=0) (actual time=0.026..0.204 rows=116 loops=1)
+        Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Filter: ((scheduled_end >= '2026-09-14 15:46:06.717917-04'::timestamp with time zone) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'NEW'::job_status))
+        Rows Removed by Filter: 1978
+        Heap Blocks: exact=77
+        Buffers: shared hit=80
+        ->  Bitmap Index Scan on ix_jobs_organization_id  (cost=0.00..28.56 rows=2170 width=0) (actual time=0.017..0.017 rows=2145 loops=1)
+              Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+              Buffers: shared hit=3
+Planning Time: 0.041 ms
+Execution Time: 0.213 ms
+
+-- GET /jobs (needs technician)  (jobs?page=1&page_size=25&status=NEW&timeframe=upcoming)
+-- SELECT jobs.booking_id, jobs.employee_id, jobs.scheduled_start, jobs.scheduled_end, jobs.status, jobs.started_at, jobs.completed_at, jobs.internal_notes, jobs.id, jobs.organization_id, jobs.created_at, jobs.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, bookings_1.customer_id, bookings_1.service_id, bookings_1.requested_start, bookings_1.requested_end, bookings_1.status AS status_1, bookings_1.customer_notes, bookings_1.admin_notes, bookings_1.id AS id_4, bookings_1.organization_id AS organization_id_3, bookings_1.created_at AS created_at_4, bookings_1.updated_at AS updated_at_4, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_5, users_2.created_at AS created_at_5, users_2.updated_at AS updated_at_5, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_6, employees_1.organization_id AS organization_id_4, employees_1.created_at AS created_at_6, employees_1.updated_at AS updated_at_6 FROM jobs LEFT OUTER JOIN bookings AS bookings_1 ON jobs.booking_id = bookings_1.id LEFT OUTER JOIN customers AS customers_1 ON bookings_1.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings_1.service_id = services_1.id LEFT OUTER JOIN employees AS employees_1 ON jobs.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE jobs.organization_id = %(organization_id_5)s::UUID AND jobs.status = %(status_2)s AND jobs.scheduled_end >= %(scheduled_end_1)s::TIMESTAMP WITH TIME ZONE ORDER BY jobs.scheduled_start ASC, jobs.id ASC LIMIT %(param_1)s::INTEGER OFFSET %(param_2)s::INTEGER
+Limit  (cost=1176.83..1176.84 rows=2 width=1385) (actual time=0.985..0.989 rows=25 loops=1)
+  Buffers: shared hit=1356
+  ->  Sort  (cost=1176.83..1176.84 rows=2 width=1385) (actual time=0.985..0.987 rows=25 loops=1)
+        Sort Key: jobs.scheduled_start, jobs.id
+        Sort Method: top-N heapsort  Memory: 55kB
+        Buffers: shared hit=1356
+        ->  Nested Loop Left Join  (cost=30.13..1176.82 rows=2 width=1385) (actual time=0.034..0.914 rows=116 loops=1)
+              Buffers: shared hit=1356
+              ->  Nested Loop Left Join  (cost=29.98..1176.43 rows=2 width=1244) (actual time=0.032..0.806 rows=116 loops=1)
+                    Buffers: shared hit=1124
+                    ->  Nested Loop Left Join  (cost=29.70..1170.60 rows=2 width=879) (actual time=0.029..0.654 rows=116 loops=1)
+                          Buffers: shared hit=776
+                          ->  Nested Loop Left Join  (cost=29.41..1169.32 rows=2 width=759) (actual time=0.026..0.481 rows=116 loops=1)
+                                Buffers: shared hit=428
+                                ->  Nested Loop Left Join  (cost=29.12..1152.67 rows=2 width=595) (actual time=0.023..0.222 rows=116 loops=1)
+                                      Buffers: shared hit=80
+                                      ->  Bitmap Heap Scan on jobs  (cost=28.57..1120.52 rows=2 width=148) (actual time=0.022..0.187 rows=116 loops=1)
+                                            Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                            Filter: ((scheduled_end >= '2026-09-14 15:46:06.717917-04'::timestamp with time zone) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'NEW'::job_status))
+                                            Rows Removed by Filter: 1978
+                                            Heap Blocks: exact=77
+                                            Buffers: shared hit=80
+                                            ->  Bitmap Index Scan on ix_jobs_organization_id  (cost=0.00..28.56 rows=2170 width=0) (actual time=0.014..0.014 rows=2145 loops=1)
+                                                  Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                                  Buffers: shared hit=3
+                                      ->  Nested Loop Left Join  (cost=0.56..16.07 rows=1 width=447) (actual time=0.000..0.000 rows=0 loops=116)
+                                            ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..8.31 rows=1 width=82) (actual time=0.000..0.000 rows=0 loops=116)
+                                                  Index Cond: (id = jobs.employee_id)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                            ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (never executed)
+                                                  Index Cond: (id = employees_1.user_id)
+                                ->  Index Scan using pk_bookings on bookings bookings_1  (cost=0.29..8.32 rows=1 width=164) (actual time=0.002..0.002 rows=1 loops=116)
+                                      Index Cond: (id = jobs.booking_id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                      Buffers: shared hit=348
+                          ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..0.64 rows=1 width=120) (actual time=0.001..0.001 rows=1 loops=116)
+                                Index Cond: (id = bookings_1.customer_id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                Buffers: shared hit=348
+                    ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=116)
+                          Index Cond: (id = customers_1.user_id)
+                          Buffers: shared hit=348
+              ->  Index Scan using pk_services on services services_1  (cost=0.14..0.19 rows=1 width=141) (actual time=0.001..0.001 rows=1 loops=116)
+                    Index Cond: (id = bookings_1.service_id)
+                    Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                    Buffers: shared hit=232
+Planning:
+  Buffers: shared hit=102
+Planning Time: 0.618 ms
+Execution Time: 1.019 ms
+
+-- GET /customers  (customers?page=5&page_size=25)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.004..0.004 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.002..0.002 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.001..0.001 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.039 ms
+Execution Time: 0.008 ms
+
+-- GET /customers  (customers?page=5&page_size=25)
+-- SELECT count(*) AS count_1 FROM customers JOIN users ON users.id = customers.user_id WHERE customers.organization_id = %(organization_id_1)s::UUID AND customers.archived_at IS NULL
+Aggregate  (cost=226.78..226.79 rows=1 width=8) (actual time=0.268..0.269 rows=1 loops=1)
+  Buffers: shared hit=809
+  ->  Nested Loop  (cost=7.57..226.74 rows=18 width=0) (actual time=0.006..0.260 rows=400 loops=1)
+        Buffers: shared hit=809
+        ->  Bitmap Heap Scan on customers  (cost=7.29..157.29 rows=18 width=16) (actual time=0.005..0.089 rows=400 loops=1)
+              Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+              Filter: ((archived_at IS NULL) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+              Heap Blocks: exact=6
+              Buffers: shared hit=8
+              ->  Bitmap Index Scan on ix_customers_organization_id_created_at  (cost=0.00..7.29 rows=400 width=0) (actual time=0.003..0.003 rows=400 loops=1)
+                    Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                    Buffers: shared hit=2
+        ->  Index Only Scan using pk_users on users  (cost=0.29..3.86 rows=1 width=16) (actual time=0.000..0.000 rows=1 loops=400)
+              Index Cond: (id = customers.user_id)
+              Heap Fetches: 0
+              Buffers: shared hit=801
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.049 ms
+Execution Time: 0.274 ms
+
+-- GET /customers  (customers?page=5&page_size=25)
+-- SELECT customers.user_id, customers.address, customers.notes, customers.archived_at, customers.id, customers.organization_id, customers.created_at, customers.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1 FROM customers JOIN users ON users.id = customers.user_id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers.user_id WHERE customers.organization_id = %(organization_id_1)s::UUID AND customers.archived_at IS NULL ORDER BY users.first_name ASC, users.last_name ASC, customers.id ASC LIMIT %(param_1)s::INTEGER OFFSET %(param_2)s::INTEGER
+Limit  (cost=440.60..440.61 rows=1 width=497) (actual time=1.468..1.472 rows=25 loops=1)
+  Buffers: shared hit=2408
+  ->  Sort  (cost=440.56..440.60 rows=18 width=497) (actual time=1.463..1.468 rows=125 loops=1)
+        Sort Key: users.first_name, users.last_name, customers.id
+        Sort Method: top-N heapsort  Memory: 131kB
+        Buffers: shared hit=2408
+        ->  Nested Loop Left Join  (cost=7.86..440.18 rows=18 width=497) (actual time=0.034..1.096 rows=400 loops=1)
+              Buffers: shared hit=2408
+              ->  Nested Loop  (cost=7.57..298.74 rows=18 width=132) (actual time=0.030..0.756 rows=400 loops=1)
+                    Buffers: shared hit=1208
+                    ->  Bitmap Heap Scan on customers  (cost=7.29..157.29 rows=18 width=120) (actual time=0.021..0.211 rows=400 loops=1)
+                          Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                          Filter: ((archived_at IS NULL) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+                          Heap Blocks: exact=6
+                          Buffers: shared hit=8
+                          ->  Bitmap Index Scan on ix_customers_organization_id_created_at  (cost=0.00..7.29 rows=400 width=0) (actual time=0.013..0.014 rows=400 loops=1)
+                                Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                Buffers: shared hit=2
+                    ->  Index Scan using pk_users on users  (cost=0.29..7.86 rows=1 width=28) (actual time=0.001..0.001 rows=1 loops=400)
+                          Index Cond: (id = customers.user_id)
+                          Buffers: shared hit=1200
+              ->  Index Scan using pk_users on users users_1  (cost=0.29..7.86 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=400)
+                    Index Cond: (id = customers.user_id)
+                    Buffers: shared hit=1200
+Planning:
+  Buffers: shared hit=24
+Planning Time: 0.233 ms
+Execution Time: 1.513 ms
+
+-- GET /customers  (customers?page=5&page_size=25)
+-- SELECT bookings.customer_id, count(*) AS count_1 FROM bookings WHERE bookings.organization_id = %(organization_id_1)s::UUID AND bookings.customer_id IN (%(customer_id_1_1)s::UUID, %(customer_id_1_2)s::UUID, %(customer_id_1_3)s::UUID, %(customer_id_1_4)s::UUID, %(customer_id_1_5)s::UUID, %(customer_id_1_6)s::UUID, %(customer_id_1_7)s::UUID, %(customer_id_1_8)s::UUID, %(customer_id_1_9)s::UUID, %(customer_id_1_10)s::UUID, %(customer_id_1_11)s::UUID, %(customer_id_1_12)s::UUID, %(customer_id_1_13)s::UUID, %(customer_id_1_14)s::UUID, %(customer_id_1_15)s::UUID, %(customer_id_1_16)s::UUID, %(customer_id_1_17)s::UUID, %(customer_id_1_18)s::UUID, %(customer_id_1_19)s::UUID, %(customer_id_1_20)s::UUID, %(customer_id_1_21)s::UUID, %(customer_id_1_22)s::UUID, %(customer_id_1_23)s::UUID, %(customer_id_1_24)s::UUID, %(customer_id_1_25)s::UUID) GROUP BY bookings.customer_id
+GroupAggregate  (cost=107.65..107.67 rows=1 width=24) (actual time=0.107..0.122 rows=25 loops=1)
+  Group Key: customer_id
+  Buffers: shared hit=51
+  ->  Sort  (cost=107.65..107.65 rows=1 width=16) (actual time=0.104..0.108 rows=124 loops=1)
+        Sort Key: customer_id
+        Sort Method: quicksort  Memory: 27kB
+        Buffers: shared hit=51
+        ->  Index Only Scan using ix_bookings_organization_id_customer_id on bookings  (cost=0.29..107.64 rows=1 width=16) (actual time=0.012..0.090 rows=124 loops=1)
+              Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (customer_id = ANY ('{c05dba46-ce44-4834-a107-3da8a5ebcea7,44ba1a14-fa19-46a4-861a-d402f9129825,e4c0cf01-0cd4-419f-bac6-1ea9d9756fa7,6b0e6ea9-376f-4da1-b35a-c927972efd6f,9ed70203-275b-4fd3-a219-f5eacccfee10,c3ae4c9d-7350-47a7-8735-15b25e6b3c66,11870418-cf5a-4ee7-bd48-e8a47f9c6745,abdf5d16-2858-4b13-b7c0-75e555a192ee,8724e36b-659f-4417-8dc5-7480c1f3474a,a8205179-463c-4e75-a1ce-998aa60c915c,7b22b931-d041-4745-b548-3ba01e044246,e622022e-50be-44cd-b3dd-8e961149d1a2,9f6afde8-a899-4517-8d2a-7b3fc126d1a8,fe60cfca-b988-41ae-a3b2-81fa871fa037,23c7fdf0-940d-4334-a5fe-bd6c6e252ded,c0111840-f55e-4d60-968b-1e5e2478d6a0,da43ca4b-7883-4a52-b07f-b18e83aff4e8,86480832-de88-46c1-9cf8-a0de68ce4c59,ae237ae4-1046-47a5-9356-486581653c0e,5c7ad7d8-fbf6-402c-8482-80535574f679,7f35d823-cedd-4449-af6a-bc8aa65ae193,a76558e4-7856-4800-8984-1a231a22fa22,fef66551-08cf-49f2-a9f5-896862d8439a,8fea21ef-9f23-440b-9199-6ee9ff680c89,cfda7950-3b5b-446f-a880-6a34af27442d}'::uuid[])))
+              Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+              Heap Fetches: 0
+              Buffers: shared hit=51
+Planning Time: 0.099 ms
+Execution Time: 0.133 ms
+
+-- GET /customers  (customers?page=5&page_size=25)
+-- SELECT bookings.customer_id, count(*) AS count_1, max(jobs.completed_at) AS max_1 FROM bookings JOIN jobs ON jobs.booking_id = bookings.id WHERE bookings.organization_id = %(organization_id_1)s::UUID AND bookings.customer_id IN (%(customer_id_1_1)s::UUID, %(customer_id_1_2)s::UUID, %(customer_id_1_3)s::UUID, %(customer_id_1_4)s::UUID, %(customer_id_1_5)s::UUID, %(customer_id_1_6)s::UUID, %(customer_id_1_7)s::UUID, %(customer_id_1_8)s::UUID, %(customer_id_1_9)s::UUID, %(customer_id_1_10)s::UUID, %(customer_id_1_11)s::UUID, %(customer_id_1_12)s::UUID, %(customer_id_1_13)s::UUID, %(customer_id_1_14)s::UUID, %(customer_id_1_15)s::UUID, %(customer_id_1_16)s::UUID, %(customer_id_1_17)s::UUID, %(customer_id_1_18)s::UUID, %(customer_id_1_19)s::UUID, %(customer_id_1_20)s::UUID, %(customer_id_1_21)s::UUID, %(customer_id_1_22)s::UUID, %(customer_id_1_23)s::UUID, %(customer_id_1_24)s::UUID, %(customer_id_1_25)s::UUID) AND jobs.status = %(status_1)s GROUP BY bookings.customer_id
+GroupAggregate  (cost=132.00..132.02 rows=1 width=32) (actual time=0.455..0.470 rows=25 loops=1)
+  Group Key: bookings.customer_id
+  Buffers: shared hit=546
+  ->  Sort  (cost=132.00..132.01 rows=1 width=24) (actual time=0.453..0.457 rows=111 loops=1)
+        Sort Key: bookings.customer_id
+        Sort Method: quicksort  Memory: 30kB
+        Buffers: shared hit=546
+        ->  Nested Loop  (cost=0.58..131.99 rows=1 width=24) (actual time=0.013..0.439 rows=111 loops=1)
+              Buffers: shared hit=546
+              ->  Index Scan using ix_bookings_organization_id_customer_id on bookings  (cost=0.29..123.64 rows=1 width=32) (actual time=0.006..0.143 rows=124 loops=1)
+                    Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (customer_id = ANY ('{c05dba46-ce44-4834-a107-3da8a5ebcea7,44ba1a14-fa19-46a4-861a-d402f9129825,e4c0cf01-0cd4-419f-bac6-1ea9d9756fa7,6b0e6ea9-376f-4da1-b35a-c927972efd6f,9ed70203-275b-4fd3-a219-f5eacccfee10,c3ae4c9d-7350-47a7-8735-15b25e6b3c66,11870418-cf5a-4ee7-bd48-e8a47f9c6745,abdf5d16-2858-4b13-b7c0-75e555a192ee,8724e36b-659f-4417-8dc5-7480c1f3474a,a8205179-463c-4e75-a1ce-998aa60c915c,7b22b931-d041-4745-b548-3ba01e044246,e622022e-50be-44cd-b3dd-8e961149d1a2,9f6afde8-a899-4517-8d2a-7b3fc126d1a8,fe60cfca-b988-41ae-a3b2-81fa871fa037,23c7fdf0-940d-4334-a5fe-bd6c6e252ded,c0111840-f55e-4d60-968b-1e5e2478d6a0,da43ca4b-7883-4a52-b07f-b18e83aff4e8,86480832-de88-46c1-9cf8-a0de68ce4c59,ae237ae4-1046-47a5-9356-486581653c0e,5c7ad7d8-fbf6-402c-8482-80535574f679,7f35d823-cedd-4449-af6a-bc8aa65ae193,a76558e4-7856-4800-8984-1a231a22fa22,fef66551-08cf-49f2-a9f5-896862d8439a,8fea21ef-9f23-440b-9199-6ee9ff680c89,cfda7950-3b5b-446f-a880-6a34af27442d}'::uuid[])))
+                    Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                    Buffers: shared hit=174
+              ->  Index Scan using one_job_per_booking on jobs  (cost=0.29..8.33 rows=1 width=24) (actual time=0.002..0.002 rows=1 loops=124)
+                    Index Cond: (booking_id = bookings.id)
+                    Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'COMPLETED'::job_status))
+                    Rows Removed by Filter: 0
+                    Buffers: shared hit=372
+Planning:
+  Buffers: shared hit=14
+Planning Time: 0.167 ms
+Execution Time: 0.488 ms
+
+-- GET /schedule  (schedule?start=2026-09-14)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.019..0.019 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.005..0.006 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.012..0.012 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.122 ms
+Execution Time: 0.031 ms
+
+-- GET /schedule  (schedule?start=2026-09-14)
+-- SELECT organizations.name AS organizations_name, organizations.slug AS organizations_slug, organizations.email AS organizations_email, organizations.phone AS organizations_phone, organizations.timezone AS organizations_timezone, organizations.address AS organizations_address, organizations.logo_url AS organizations_logo_url, organizations.id AS organizations_id, organizations.created_at AS organizations_created_at, organizations.updated_at AS organizations_updated_at FROM organizations WHERE organizations.id = %(pk_1)s::UUID
+Seq Scan on organizations  (cost=0.00..1.31 rows=1 width=260) (actual time=0.003..0.005 rows=1 loops=1)
+  Filter: (id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+  Rows Removed by Filter: 24
+  Buffers: shared hit=1
+Planning Time: 0.021 ms
+Execution Time: 0.008 ms
+
+-- GET /schedule  (schedule?start=2026-09-14)
+-- SELECT employees.user_id, employees.job_title, employees.active, employees.id, employees.organization_id, employees.created_at, employees.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1 FROM employees JOIN users ON users.id = employees.user_id LEFT OUTER JOIN users AS users_1 ON users_1.id = employees.user_id WHERE employees.organization_id = %(organization_id_1)s::UUID AND employees.active IS true ORDER BY users.first_name, users.last_name, employees.id
+Sort  (cost=29.52..29.52 rows=1 width=459) (actual time=0.124..0.125 rows=20 loops=1)
+  Sort Key: users.first_name, users.last_name, employees.id
+  Sort Method: quicksort  Memory: 30kB
+  Buffers: shared hit=122
+  ->  Nested Loop Left Join  (cost=4.87..29.51 rows=1 width=459) (actual time=0.018..0.101 rows=20 loops=1)
+        Buffers: shared hit=122
+        ->  Nested Loop  (cost=4.58..21.20 rows=1 width=94) (actual time=0.014..0.079 rows=20 loops=1)
+              Buffers: shared hit=62
+              ->  Bitmap Heap Scan on employees  (cost=4.30..12.90 rows=1 width=82) (actual time=0.007..0.017 rows=20 loops=1)
+                    Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                    Filter: ((active IS TRUE) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+                    Heap Blocks: exact=1
+                    Buffers: shared hit=2
+                    ->  Bitmap Index Scan on ix_employees_organization_id  (cost=0.00..4.30 rows=20 width=0) (actual time=0.003..0.003 rows=20 loops=1)
+                          Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                          Buffers: shared hit=1
+              ->  Index Scan using pk_users on users  (cost=0.29..8.30 rows=1 width=28) (actual time=0.003..0.003 rows=1 loops=20)
+                    Index Cond: (id = employees.user_id)
+                    Buffers: shared hit=60
+        ->  Index Scan using pk_users on users users_1  (cost=0.29..8.30 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=20)
+              Index Cond: (id = employees.user_id)
+              Buffers: shared hit=60
+Planning:
+  Buffers: shared hit=24
+Planning Time: 0.199 ms
+Execution Time: 0.157 ms
+
+-- GET /schedule  (schedule?start=2026-09-14)
+-- SELECT employee_availability.employee_id, employee_availability.day_of_week, employee_availability.start_time, employee_availability.end_time, employee_availability.id, employee_availability.organization_id, employee_availability.created_at, employee_availability.updated_at FROM employee_availability WHERE employee_availability.organization_id = %(organization_id_1)s::UUID AND employee_availability.employee_id IN (%(employee_id_1_1)s::UUID, %(employee_id_1_2)s::UUID, %(employee_id_1_3)s::UUID, %(employee_id_1_4)s::UUID, %(employee_id_1_5)s::UUID, %(employee_id_1_6)s::UUID, %(employee_id_1_7)s::UUID, %(employee_id_1_8)s::UUID, %(employee_id_1_9)s::UUID, %(employee_id_1_10)s::UUID, %(employee_id_1_11)s::UUID, %(employee_id_1_12)s::UUID, %(employee_id_1_13)s::UUID, %(employee_id_1_14)s::UUID, %(employee_id_1_15)s::UUID, %(employee_id_1_16)s::UUID, %(employee_id_1_17)s::UUID, %(employee_id_1_18)s::UUID, %(employee_id_1_19)s::UUID, %(employee_id_1_20)s::UUID)
+Bitmap Heap Scan on employee_availability  (cost=5.38..60.28 rows=1 width=82) (actual time=0.010..0.084 rows=140 loops=1)
+  Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+  Filter: ((employee_id = ANY ('{8815028c-663a-4196-93c4-25549f214ac9,7f5bc1ae-d38b-4663-8ab3-9c146e3fbf68,69d8771a-0d29-4e27-b062-e18e3e8a9bbe,c0944fab-c445-434f-be6d-b27a62409cec,79548768-bc5c-4c73-a215-f0c224f6ac55,7d16f9f4-96bf-4459-a91b-4a3bb88cbaba,7e6294bf-46a8-4e1e-9bfa-eb5cd8de0dd4,e911c611-fb34-46eb-b2ad-bfab27c5bba7,61e6d925-95bf-479f-a10a-e07f491b7f17,55367a63-1ba2-4a02-b4ea-e3c98d422b7b,ff15791b-8db6-4ddc-99cd-94e9ff46efd8,b3290f04-2fe9-43fc-872e-490cad03c376,2178f431-2377-49e6-8056-aa5e5edf380c,daf142c3-b4ce-4d3a-80eb-617c20c0780c,ad62ea87-70bc-40c2-b224-f18d7cc6534b,857a9e53-65f0-43af-b616-4b748ed438b6,535223ba-ba56-4911-9acd-daf816baaada,e72f6d63-cfee-4bab-aed6-7efe62518202,c9de1f79-f2ef-49b7-9b58-0aa10cba7b5b,ae59c330-4f2e-4a49-aea2-33639053e57b}'::uuid[])) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+  Heap Blocks: exact=2
+  Buffers: shared hit=4
+  ->  Bitmap Index Scan on ix_employee_availability_organization_id  (cost=0.00..5.33 rows=140 width=0) (actual time=0.004..0.004 rows=140 loops=1)
+        Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Buffers: shared hit=2
+Planning Time: 0.073 ms
+Execution Time: 0.094 ms
+
+-- GET /schedule  (schedule?start=2026-09-14)
+-- SELECT availability_overrides.employee_id, availability_overrides.date, availability_overrides.available, availability_overrides.start_time, availability_overrides.end_time, availability_overrides.reason, availability_overrides.id, availability_overrides.organization_id, availability_overrides.created_at, availability_overrides.updated_at FROM availability_overrides WHERE availability_overrides.organization_id = %(organization_id_1)s::UUID AND availability_overrides.employee_id IN (%(employee_id_1_1)s::UUID, %(employee_id_1_2)s::UUID, %(employee_id_1_3)s::UUID, %(employee_id_1_4)s::UUID, %(employee_id_1_5)s::UUID, %(employee_id_1_6)s::UUID, %(employee_id_1_7)s::UUID, %(employee_id_1_8)s::UUID, %(employee_id_1_9)s::UUID, %(employee_id_1_10)s::UUID, %(employee_id_1_11)s::UUID, %(employee_id_1_12)s::UUID, %(employee_id_1_13)s::UUID, %(employee_id_1_14)s::UUID, %(employee_id_1_15)s::UUID, %(employee_id_1_16)s::UUID, %(employee_id_1_17)s::UUID, %(employee_id_1_18)s::UUID, %(employee_id_1_19)s::UUID, %(employee_id_1_20)s::UUID) AND availability_overrides.date >= %(date_1)s::DATE AND availability_overrides.date <= %(date_2)s::DATE
+Seq Scan on availability_overrides  (cost=0.05..0.05 rows=1 width=503) (actual time=0.001..0.001 rows=0 loops=1)
+  Filter: ((date >= '2026-09-14'::date) AND (date <= '2026-09-14'::date) AND (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (employee_id = ANY ('{8815028c-663a-4196-93c4-25549f214ac9,7f5bc1ae-d38b-4663-8ab3-9c146e3fbf68,69d8771a-0d29-4e27-b062-e18e3e8a9bbe,c0944fab-c445-434f-be6d-b27a62409cec,79548768-bc5c-4c73-a215-f0c224f6ac55,7d16f9f4-96bf-4459-a91b-4a3bb88cbaba,7e6294bf-46a8-4e1e-9bfa-eb5cd8de0dd4,e911c611-fb34-46eb-b2ad-bfab27c5bba7,61e6d925-95bf-479f-a10a-e07f491b7f17,55367a63-1ba2-4a02-b4ea-e3c98d422b7b,ff15791b-8db6-4ddc-99cd-94e9ff46efd8,b3290f04-2fe9-43fc-872e-490cad03c376,2178f431-2377-49e6-8056-aa5e5edf380c,daf142c3-b4ce-4d3a-80eb-617c20c0780c,ad62ea87-70bc-40c2-b224-f18d7cc6534b,857a9e53-65f0-43af-b616-4b748ed438b6,535223ba-ba56-4911-9acd-daf816baaada,e72f6d63-cfee-4bab-aed6-7efe62518202,c9de1f79-f2ef-49b7-9b58-0aa10cba7b5b,ae59c330-4f2e-4a49-aea2-33639053e57b}'::uuid[])) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+Planning:
+  Buffers: shared hit=5
+Planning Time: 0.057 ms
+Execution Time: 0.007 ms
+
+-- GET /schedule  (schedule?start=2026-09-14)
+-- SELECT jobs.booking_id, jobs.employee_id, jobs.scheduled_start, jobs.scheduled_end, jobs.status, jobs.started_at, jobs.completed_at, jobs.internal_notes, jobs.id, jobs.organization_id, jobs.created_at, jobs.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, bookings_1.customer_id, bookings_1.service_id, bookings_1.requested_start, bookings_1.requested_end, bookings_1.status AS status_1, bookings_1.customer_notes, bookings_1.admin_notes, bookings_1.id AS id_4, bookings_1.organization_id AS organization_id_3, bookings_1.created_at AS created_at_4, bookings_1.updated_at AS updated_at_4, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_5, users_2.created_at AS created_at_5, users_2.updated_at AS updated_at_5, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_6, employees_1.organization_id AS organization_id_4, employees_1.created_at AS created_at_6, employees_1.updated_at AS updated_at_6 FROM jobs LEFT OUTER JOIN bookings AS bookings_1 ON jobs.booking_id = bookings_1.id LEFT OUTER JOIN customers AS customers_1 ON bookings_1.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings_1.service_id = services_1.id LEFT OUTER JOIN employees AS employees_1 ON jobs.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE jobs.organization_id = %(organization_id_5)s::UUID AND jobs.scheduled_start < %(scheduled_start_1)s::TIMESTAMP WITH TIME ZONE AND jobs.scheduled_end > %(scheduled_end_1)s::TIMESTAMP WITH TIME ZONE ORDER BY jobs.scheduled_start ASC, jobs.id ASC
+Sort  (cost=1323.88..1323.90 rows=9 width=1385) (actual time=1.004..1.007 rows=30 loops=1)
+  Sort Key: jobs.scheduled_start, jobs.id
+  Sort Method: quicksort  Memory: 48kB
+  Buffers: shared hit=505
+  ->  Nested Loop Left Join  (cost=29.86..1323.73 rows=9 width=1385) (actual time=0.096..0.958 rows=30 loops=1)
+        Buffers: shared hit=505
+        ->  Nested Loop Left Join  (cost=29.57..1253.92 rows=9 width=1020) (actual time=0.092..0.912 rows=30 loops=1)
+              Join Filter: (jobs.employee_id = employees_1.id)
+              Rows Removed by Join Filter: 278
+              Buffers: shared hit=418
+              ->  Nested Loop Left Join  (cost=29.57..1229.14 rows=9 width=938) (actual time=0.079..0.586 rows=30 loops=1)
+                    Buffers: shared hit=410
+                    ->  Nested Loop Left Join  (cost=29.43..1227.44 rows=9 width=797) (actual time=0.075..0.538 rows=30 loops=1)
+                          Buffers: shared hit=350
+                          ->  Nested Loop Left Join  (cost=29.14..1201.17 rows=9 width=432) (actual time=0.071..0.482 rows=30 loops=1)
+                                Buffers: shared hit=260
+                                ->  Nested Loop Left Join  (cost=28.86..1195.45 rows=9 width=312) (actual time=0.067..0.412 rows=30 loops=1)
+                                      Buffers: shared hit=170
+                                      ->  Bitmap Heap Scan on jobs  (cost=28.57..1120.52 rows=9 width=148) (actual time=0.061..0.326 rows=30 loops=1)
+                                            Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                            Filter: ((scheduled_start < '2026-09-14 20:00:00-04'::timestamp with time zone) AND (scheduled_end > '2026-09-13 20:00:00-04'::timestamp with time zone) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+                                            Rows Removed by Filter: 2064
+                                            Heap Blocks: exact=77
+                                            Buffers: shared hit=80
+                                            ->  Bitmap Index Scan on ix_jobs_organization_id  (cost=0.00..28.56 rows=2170 width=0) (actual time=0.037..0.037 rows=2145 loops=1)
+                                                  Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                                                  Buffers: shared hit=3
+                                      ->  Index Scan using pk_bookings on bookings bookings_1  (cost=0.29..8.32 rows=1 width=164) (actual time=0.002..0.002 rows=1 loops=30)
+                                            Index Cond: (id = jobs.booking_id)
+                                            Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                            Buffers: shared hit=90
+                                ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..0.64 rows=1 width=120) (actual time=0.002..0.002 rows=1 loops=30)
+                                      Index Cond: (id = bookings_1.customer_id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                      Buffers: shared hit=90
+                          ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=30)
+                                Index Cond: (id = customers_1.user_id)
+                                Buffers: shared hit=90
+                    ->  Index Scan using pk_services on services services_1  (cost=0.14..0.19 rows=1 width=141) (actual time=0.001..0.001 rows=1 loops=30)
+                          Index Cond: (id = bookings_1.service_id)
+                          Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                          Buffers: shared hit=60
+              ->  Materialize  (cost=0.00..21.86 rows=22 width=82) (actual time=0.000..0.010 rows=10 loops=30)
+                    Buffers: shared hit=8
+                    ->  Seq Scan on employees employees_1  (cost=0.00..21.75 rows=22 width=82) (actual time=0.005..0.272 rows=20 loops=1)
+                          Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                          Rows Removed by Filter: 480
+                          Buffers: shared hit=8
+        ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=30)
+              Index Cond: (id = employees_1.user_id)
+              Buffers: shared hit=87
+Planning:
+  Buffers: shared hit=102
+Planning Time: 1.138 ms
+Execution Time: 1.078 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT users.auth_provider_id, users.email, users.first_name, users.last_name, users.phone, users.avatar_url, users.is_platform_admin, users.password_hash, users.id, users.created_at, users.updated_at, organization_memberships.organization_id, organization_memberships.user_id, organization_memberships.role, organization_memberships.status, organization_memberships.id AS id_1, organization_memberships.created_at AS created_at_1, organization_memberships.updated_at AS updated_at_1 FROM users LEFT OUTER JOIN organization_memberships ON organization_memberships.user_id = users.id AND organization_memberships.status = %(status_1)s WHERE users.auth_provider_id = %(auth_provider_id_1)s::VARCHAR
+Nested Loop Left Join  (cost=0.57..16.62 rows=1 width=437) (actual time=0.009..0.009 rows=1 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using ix_users_auth_provider_id on users  (cost=0.29..8.30 rows=1 width=365) (actual time=0.005..0.005 rows=1 loops=1)
+        Index Cond: ((auth_provider_id)::text = 'dev|dispatcher@load-tenant-00.load.example.com'::text)
+        Buffers: shared hit=3
+  ->  Index Scan using ix_organization_memberships_user_id on organization_memberships  (cost=0.29..8.30 rows=1 width=72) (actual time=0.003..0.003 rows=1 loops=1)
+        Index Cond: (user_id = users.id)
+        Filter: (status = 'ACTIVE'::membership_status)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.088 ms
+Execution Time: 0.018 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT organizations.name AS organizations_name, organizations.slug AS organizations_slug, organizations.email AS organizations_email, organizations.phone AS organizations_phone, organizations.timezone AS organizations_timezone, organizations.address AS organizations_address, organizations.logo_url AS organizations_logo_url, organizations.id AS organizations_id, organizations.created_at AS organizations_created_at, organizations.updated_at AS organizations_updated_at FROM organizations WHERE organizations.id = %(pk_1)s::UUID
+Seq Scan on organizations  (cost=0.00..1.31 rows=1 width=260) (actual time=0.004..0.006 rows=1 loops=1)
+  Filter: (id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+  Rows Removed by Filter: 24
+  Buffers: shared hit=1
+Planning Time: 0.020 ms
+Execution Time: 0.009 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT count(*) AS count_1 FROM bookings WHERE bookings.organization_id = %(organization_id_1)s::UUID AND bookings.requested_start >= %(requested_start_1)s::TIMESTAMP WITH TIME ZONE AND bookings.requested_start < %(requested_start_2)s::TIMESTAMP WITH TIME ZONE AND bookings.status IN (%(status_1_1)s, %(status_1_2)s)
+Aggregate  (cost=102.92..102.93 rows=1 width=8) (actual time=0.115..0.115 rows=1 loops=1)
+  Buffers: shared hit=30
+  ->  Index Only Scan using uq_bookings_no_duplicate_open on bookings  (cost=0.41..102.92 rows=1 width=0) (actual time=0.020..0.111 rows=29 loops=1)
+        Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-13 20:00:00-04'::timestamp with time zone) AND (requested_start < '2026-09-14 20:00:00-04'::timestamp with time zone))
+        Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+        Heap Fetches: 0
+        Buffers: shared hit=30
+Planning Time: 0.100 ms
+Execution Time: 0.126 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT count(*) AS count_1 FROM jobs WHERE jobs.organization_id = %(organization_id_1)s::UUID AND jobs.status = %(status_1)s
+Aggregate  (cost=385.70..385.71 rows=1 width=8) (actual time=1.204..1.204 rows=1 loops=1)
+  Buffers: shared hit=133
+  ->  Index Only Scan using ix_jobs_organization_id_status on jobs  (cost=0.29..385.64 rows=24 width=0) (actual time=0.160..1.201 rows=3 loops=1)
+        Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'IN_PROGRESS'::job_status))
+        Rows Removed by Filter: 2091
+        Heap Fetches: 1104
+        Buffers: shared hit=133
+Planning Time: 0.054 ms
+Execution Time: 1.212 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT count(*) AS count_1 FROM jobs WHERE jobs.organization_id = %(organization_id_1)s::UUID AND jobs.status = %(status_1)s AND jobs.completed_at >= %(completed_at_1)s::TIMESTAMP WITH TIME ZONE AND jobs.completed_at < %(completed_at_2)s::TIMESTAMP WITH TIME ZONE
+Aggregate  (cost=1125.94..1125.95 rows=1 width=8) (actual time=0.400..0.400 rows=1 loops=1)
+  Buffers: shared hit=80
+  ->  Bitmap Heap Scan on jobs  (cost=28.57..1125.94 rows=1 width=0) (actual time=0.063..0.395 rows=63 loops=1)
+        Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Filter: ((completed_at >= '2026-09-13 20:00:00-04'::timestamp with time zone) AND (completed_at < '2026-09-14 20:00:00-04'::timestamp with time zone) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'COMPLETED'::job_status))
+        Rows Removed by Filter: 2031
+        Heap Blocks: exact=77
+        Buffers: shared hit=80
+        ->  Bitmap Index Scan on ix_jobs_organization_id  (cost=0.00..28.56 rows=2170 width=0) (actual time=0.040..0.040 rows=2145 loops=1)
+              Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+              Buffers: shared hit=3
+Planning Time: 0.083 ms
+Execution Time: 0.412 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT count(*) AS count_1 FROM jobs WHERE jobs.organization_id = %(organization_id_1)s::UUID AND jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND jobs.scheduled_start >= %(scheduled_start_1)s::TIMESTAMP WITH TIME ZONE AND jobs.scheduled_start < %(scheduled_start_2)s::TIMESTAMP WITH TIME ZONE
+Aggregate  (cost=19.74..19.75 rows=1 width=8) (actual time=0.005..0.005 rows=1 loops=1)
+  Buffers: shared hit=2
+  ->  Bitmap Heap Scan on jobs  (cost=4.34..19.74 rows=1 width=0) (actual time=0.004..0.004 rows=0 loops=1)
+        Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone) AND (scheduled_start < '2026-09-14 20:00:00-04'::timestamp with time zone))
+        Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = ANY ('{NEW,SCHEDULED}'::job_status[])))
+        Buffers: shared hit=2
+        ->  Bitmap Index Scan on ix_jobs_organization_id_scheduled_start  (cost=0.00..4.34 rows=4 width=0) (actual time=0.004..0.004 rows=0 loops=1)
+              Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone) AND (scheduled_start < '2026-09-14 20:00:00-04'::timestamp with time zone))
+              Buffers: shared hit=2
+Planning Time: 0.080 ms
+Execution Time: 0.014 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT count(*) AS count_1 FROM jobs WHERE jobs.organization_id = %(organization_id_1)s::UUID AND jobs.status = %(status_1)s AND jobs.scheduled_start >= %(scheduled_start_1)s::TIMESTAMP WITH TIME ZONE
+Aggregate  (cost=516.60..516.61 rows=1 width=8) (actual time=0.234..0.235 rows=1 loops=1)
+  Buffers: shared hit=64
+  ->  Bitmap Heap Scan on jobs  (cost=6.32..516.60 rows=2 width=0) (actual time=0.020..0.228 rows=116 loops=1)
+        Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone))
+        Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'NEW'::job_status))
+        Rows Removed by Filter: 148
+        Heap Blocks: exact=62
+        Buffers: shared hit=64
+        ->  Bitmap Index Scan on ix_jobs_organization_id_scheduled_start  (cost=0.00..6.32 rows=203 width=0) (actual time=0.012..0.012 rows=335 loops=1)
+              Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone))
+              Buffers: shared hit=2
+Planning Time: 0.061 ms
+Execution Time: 0.245 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT count(*) AS count_1 FROM bookings WHERE bookings.organization_id = %(organization_id_1)s::UUID AND bookings.status = %(status_1)s AND bookings.requested_start >= %(requested_start_1)s::TIMESTAMP WITH TIME ZONE
+Aggregate  (cost=444.65..444.66 rows=1 width=8) (actual time=0.278..0.278 rows=1 loops=1)
+  Buffers: shared hit=87
+  ->  Bitmap Heap Scan on bookings  (cost=86.65..444.65 rows=3 width=0) (actual time=0.077..0.273 rows=116 loops=1)
+        Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone) AND (status = ANY ('{PENDING,CONFIRMED}'::booking_status[])))
+        Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'PENDING'::booking_status))
+        Rows Removed by Filter: 144
+        Heap Blocks: exact=58
+        Buffers: shared hit=87
+        ->  Bitmap Index Scan on uq_bookings_no_duplicate_open  (cost=0.00..86.65 rows=129 width=0) (actual time=0.066..0.066 rows=260 loops=1)
+              Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (requested_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone))
+              Buffers: shared hit=29
+Planning Time: 0.076 ms
+Execution Time: 0.287 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT employees.id FROM employees WHERE employees.organization_id = %(organization_id_1)s::UUID AND employees.active IS true
+Bitmap Heap Scan on employees  (cost=4.30..12.90 rows=1 width=16) (actual time=0.006..0.014 rows=20 loops=1)
+  Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+  Filter: ((active IS TRUE) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+  Heap Blocks: exact=1
+  Buffers: shared hit=2
+  ->  Bitmap Index Scan on ix_employees_organization_id  (cost=0.00..4.30 rows=20 width=0) (actual time=0.003..0.003 rows=20 loops=1)
+        Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Buffers: shared hit=1
+Planning Time: 0.044 ms
+Execution Time: 0.020 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT employee_availability.employee_id, employee_availability.day_of_week, employee_availability.start_time, employee_availability.end_time, employee_availability.id, employee_availability.organization_id, employee_availability.created_at, employee_availability.updated_at FROM employee_availability WHERE employee_availability.organization_id = %(organization_id_1)s::UUID AND employee_availability.employee_id IN (%(employee_id_1_1)s::UUID, %(employee_id_1_2)s::UUID, %(employee_id_1_3)s::UUID, %(employee_id_1_4)s::UUID, %(employee_id_1_5)s::UUID, %(employee_id_1_6)s::UUID, %(employee_id_1_7)s::UUID, %(employee_id_1_8)s::UUID, %(employee_id_1_9)s::UUID, %(employee_id_1_10)s::UUID, %(employee_id_1_11)s::UUID, %(employee_id_1_12)s::UUID, %(employee_id_1_13)s::UUID, %(employee_id_1_14)s::UUID, %(employee_id_1_15)s::UUID, %(employee_id_1_16)s::UUID, %(employee_id_1_17)s::UUID, %(employee_id_1_18)s::UUID, %(employee_id_1_19)s::UUID, %(employee_id_1_20)s::UUID)
+Bitmap Heap Scan on employee_availability  (cost=5.38..60.28 rows=1 width=82) (actual time=0.010..0.071 rows=140 loops=1)
+  Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+  Filter: ((employee_id = ANY ('{535223ba-ba56-4911-9acd-daf816baaada,ae59c330-4f2e-4a49-aea2-33639053e57b,daf142c3-b4ce-4d3a-80eb-617c20c0780c,79548768-bc5c-4c73-a215-f0c224f6ac55,8815028c-663a-4196-93c4-25549f214ac9,7e6294bf-46a8-4e1e-9bfa-eb5cd8de0dd4,55367a63-1ba2-4a02-b4ea-e3c98d422b7b,e911c611-fb34-46eb-b2ad-bfab27c5bba7,69d8771a-0d29-4e27-b062-e18e3e8a9bbe,e72f6d63-cfee-4bab-aed6-7efe62518202,7d16f9f4-96bf-4459-a91b-4a3bb88cbaba,c9de1f79-f2ef-49b7-9b58-0aa10cba7b5b,ff15791b-8db6-4ddc-99cd-94e9ff46efd8,61e6d925-95bf-479f-a10a-e07f491b7f17,7f5bc1ae-d38b-4663-8ab3-9c146e3fbf68,c0944fab-c445-434f-be6d-b27a62409cec,2178f431-2377-49e6-8056-aa5e5edf380c,ad62ea87-70bc-40c2-b224-f18d7cc6534b,857a9e53-65f0-43af-b616-4b748ed438b6,b3290f04-2fe9-43fc-872e-490cad03c376}'::uuid[])) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+  Heap Blocks: exact=2
+  Buffers: shared hit=4
+  ->  Bitmap Index Scan on ix_employee_availability_organization_id  (cost=0.00..5.33 rows=140 width=0) (actual time=0.005..0.005 rows=140 loops=1)
+        Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+        Buffers: shared hit=2
+Planning Time: 0.065 ms
+Execution Time: 0.080 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT availability_overrides.employee_id, availability_overrides.date, availability_overrides.available, availability_overrides.start_time, availability_overrides.end_time, availability_overrides.reason, availability_overrides.id, availability_overrides.organization_id, availability_overrides.created_at, availability_overrides.updated_at FROM availability_overrides WHERE availability_overrides.organization_id = %(organization_id_1)s::UUID AND availability_overrides.employee_id IN (%(employee_id_1_1)s::UUID, %(employee_id_1_2)s::UUID, %(employee_id_1_3)s::UUID, %(employee_id_1_4)s::UUID, %(employee_id_1_5)s::UUID, %(employee_id_1_6)s::UUID, %(employee_id_1_7)s::UUID, %(employee_id_1_8)s::UUID, %(employee_id_1_9)s::UUID, %(employee_id_1_10)s::UUID, %(employee_id_1_11)s::UUID, %(employee_id_1_12)s::UUID, %(employee_id_1_13)s::UUID, %(employee_id_1_14)s::UUID, %(employee_id_1_15)s::UUID, %(employee_id_1_16)s::UUID, %(employee_id_1_17)s::UUID, %(employee_id_1_18)s::UUID, %(employee_id_1_19)s::UUID, %(employee_id_1_20)s::UUID) AND availability_overrides.date >= %(date_1)s::DATE AND availability_overrides.date <= %(date_2)s::DATE
+Seq Scan on availability_overrides  (cost=0.05..0.05 rows=1 width=503) (actual time=0.002..0.002 rows=0 loops=1)
+  Filter: ((date >= '2026-09-14'::date) AND (date <= '2026-09-14'::date) AND (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (employee_id = ANY ('{535223ba-ba56-4911-9acd-daf816baaada,ae59c330-4f2e-4a49-aea2-33639053e57b,daf142c3-b4ce-4d3a-80eb-617c20c0780c,79548768-bc5c-4c73-a215-f0c224f6ac55,8815028c-663a-4196-93c4-25549f214ac9,7e6294bf-46a8-4e1e-9bfa-eb5cd8de0dd4,55367a63-1ba2-4a02-b4ea-e3c98d422b7b,e911c611-fb34-46eb-b2ad-bfab27c5bba7,69d8771a-0d29-4e27-b062-e18e3e8a9bbe,e72f6d63-cfee-4bab-aed6-7efe62518202,7d16f9f4-96bf-4459-a91b-4a3bb88cbaba,c9de1f79-f2ef-49b7-9b58-0aa10cba7b5b,ff15791b-8db6-4ddc-99cd-94e9ff46efd8,61e6d925-95bf-479f-a10a-e07f491b7f17,7f5bc1ae-d38b-4663-8ab3-9c146e3fbf68,c0944fab-c445-434f-be6d-b27a62409cec,2178f431-2377-49e6-8056-aa5e5edf380c,ad62ea87-70bc-40c2-b224-f18d7cc6534b,857a9e53-65f0-43af-b616-4b748ed438b6,b3290f04-2fe9-43fc-872e-490cad03c376}'::uuid[])) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+Planning:
+  Buffers: shared hit=5
+Planning Time: 0.068 ms
+Execution Time: 0.007 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT jobs.booking_id, jobs.employee_id, jobs.scheduled_start, jobs.scheduled_end, jobs.status, jobs.started_at, jobs.completed_at, jobs.internal_notes, jobs.id, jobs.organization_id, jobs.created_at, jobs.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, bookings_1.customer_id, bookings_1.service_id, bookings_1.requested_start, bookings_1.requested_end, bookings_1.status AS status_1, bookings_1.customer_notes, bookings_1.admin_notes, bookings_1.id AS id_4, bookings_1.organization_id AS organization_id_3, bookings_1.created_at AS created_at_4, bookings_1.updated_at AS updated_at_4, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_5, users_2.created_at AS created_at_5, users_2.updated_at AS updated_at_5, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_6, employees_1.organization_id AS organization_id_4, employees_1.created_at AS created_at_6, employees_1.updated_at AS updated_at_6 FROM jobs LEFT OUTER JOIN bookings AS bookings_1 ON jobs.booking_id = bookings_1.id LEFT OUTER JOIN customers AS customers_1 ON bookings_1.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings_1.service_id = services_1.id LEFT OUTER JOIN employees AS employees_1 ON jobs.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE jobs.organization_id = %(organization_id_5)s::UUID AND jobs.status = %(status_2)s AND jobs.scheduled_start >= %(scheduled_start_1)s::TIMESTAMP WITH TIME ZONE AND jobs.scheduled_start < %(scheduled_start_2)s::TIMESTAMP WITH TIME ZONE ORDER BY jobs.scheduled_start, jobs.id LIMIT %(param_1)s::INTEGER
+Limit  (cost=237.66..237.67 rows=1 width=1385) (actual time=0.109..0.110 rows=5 loops=1)
+  Buffers: shared hit=87
+  ->  Sort  (cost=237.66..237.67 rows=1 width=1385) (actual time=0.108..0.109 rows=5 loops=1)
+        Sort Key: jobs.scheduled_start, jobs.id
+        Sort Method: quicksort  Memory: 30kB
+        Buffers: shared hit=87
+        ->  Nested Loop Left Join  (cost=6.64..237.65 rows=1 width=1385) (actual time=0.029..0.102 rows=5 loops=1)
+              Buffers: shared hit=87
+              ->  Nested Loop Left Join  (cost=6.50..237.46 rows=1 width=1244) (actual time=0.027..0.093 rows=5 loops=1)
+                    Buffers: shared hit=77
+                    ->  Nested Loop Left Join  (cost=6.21..234.54 rows=1 width=879) (actual time=0.023..0.081 rows=5 loops=1)
+                          Buffers: shared hit=62
+                          ->  Nested Loop Left Join  (cost=5.93..233.90 rows=1 width=759) (actual time=0.018..0.066 rows=5 loops=1)
+                                Buffers: shared hit=47
+                                ->  Nested Loop Left Join  (cost=5.64..225.57 rows=1 width=595) (actual time=0.014..0.051 rows=5 loops=1)
+                                      Buffers: shared hit=32
+                                      ->  Bitmap Heap Scan on jobs  (cost=5.08..209.49 rows=1 width=148) (actual time=0.012..0.046 rows=5 loops=1)
+                                            Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone) AND (scheduled_start < '2026-09-16 15:46:06.788157-04'::timestamp with time zone))
+                                            Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'NEW'::job_status))
+                                            Rows Removed by Filter: 55
+                                            Heap Blocks: exact=30
+                                            Buffers: shared hit=32
+                                            ->  Bitmap Index Scan on ix_jobs_organization_id_scheduled_start  (cost=0.00..5.08 rows=63 width=0) (actual time=0.005..0.006 rows=83 loops=1)
+                                                  Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone) AND (scheduled_start < '2026-09-16 15:46:06.788157-04'::timestamp with time zone))
+                                                  Buffers: shared hit=2
+                                      ->  Nested Loop Left Join  (cost=0.56..16.07 rows=1 width=447) (actual time=0.000..0.000 rows=0 loops=5)
+                                            ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..8.31 rows=1 width=82) (actual time=0.000..0.000 rows=0 loops=5)
+                                                  Index Cond: (id = jobs.employee_id)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                            ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (never executed)
+                                                  Index Cond: (id = employees_1.user_id)
+                                ->  Index Scan using pk_bookings on bookings bookings_1  (cost=0.29..8.32 rows=1 width=164) (actual time=0.002..0.002 rows=1 loops=5)
+                                      Index Cond: (id = jobs.booking_id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                      Buffers: shared hit=15
+                          ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..0.64 rows=1 width=120) (actual time=0.002..0.002 rows=1 loops=5)
+                                Index Cond: (id = bookings_1.customer_id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                Buffers: shared hit=15
+                    ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.002..0.002 rows=1 loops=5)
+                          Index Cond: (id = customers_1.user_id)
+                          Buffers: shared hit=15
+              ->  Index Scan using pk_services on services services_1  (cost=0.14..0.19 rows=1 width=141) (actual time=0.001..0.001 rows=1 loops=5)
+                    Index Cond: (id = bookings_1.service_id)
+                    Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                    Buffers: shared hit=10
+Planning:
+  Buffers: shared hit=102
+Planning Time: 0.611 ms
+Execution Time: 0.148 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT jobs.booking_id, jobs.employee_id, jobs.scheduled_start, jobs.scheduled_end, jobs.status, jobs.started_at, jobs.completed_at, jobs.internal_notes, jobs.id, jobs.organization_id, jobs.created_at, jobs.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, bookings_1.customer_id, bookings_1.service_id, bookings_1.requested_start, bookings_1.requested_end, bookings_1.status AS status_1, bookings_1.customer_notes, bookings_1.admin_notes, bookings_1.id AS id_4, bookings_1.organization_id AS organization_id_3, bookings_1.created_at AS created_at_4, bookings_1.updated_at AS updated_at_4, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_5, users_2.created_at AS created_at_5, users_2.updated_at AS updated_at_5, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_6, employees_1.organization_id AS organization_id_4, employees_1.created_at AS created_at_6, employees_1.updated_at AS updated_at_6 FROM jobs LEFT OUTER JOIN bookings AS bookings_1 ON jobs.booking_id = bookings_1.id LEFT OUTER JOIN customers AS customers_1 ON bookings_1.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings_1.service_id = services_1.id LEFT OUTER JOIN employees AS employees_1 ON jobs.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE jobs.organization_id = %(organization_id_5)s::UUID AND jobs.status = %(status_2)s AND jobs.scheduled_start < %(scheduled_start_1)s::TIMESTAMP WITH TIME ZONE AND jobs.scheduled_start >= %(scheduled_start_2)s::TIMESTAMP WITH TIME ZONE ORDER BY jobs.scheduled_start, jobs.id LIMIT %(param_1)s::INTEGER
+Limit  (cost=101.62..101.62 rows=1 width=1385) (actual time=0.012..0.013 rows=0 loops=1)
+  Buffers: shared hit=12
+  ->  Sort  (cost=101.62..101.62 rows=1 width=1385) (actual time=0.012..0.013 rows=0 loops=1)
+        Sort Key: jobs.scheduled_start, jobs.id
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=12
+        ->  Nested Loop Left Join  (cost=6.09..101.61 rows=1 width=1385) (actual time=0.012..0.012 rows=0 loops=1)
+              Buffers: shared hit=12
+              ->  Nested Loop Left Join  (cost=5.95..101.41 rows=1 width=1244) (actual time=0.012..0.012 rows=0 loops=1)
+                    Buffers: shared hit=12
+                    ->  Nested Loop Left Join  (cost=5.66..98.49 rows=1 width=879) (actual time=0.012..0.012 rows=0 loops=1)
+                          Buffers: shared hit=12
+                          ->  Nested Loop Left Join  (cost=5.38..97.85 rows=1 width=759) (actual time=0.011..0.012 rows=0 loops=1)
+                                Buffers: shared hit=12
+                                ->  Nested Loop Left Join  (cost=5.09..89.52 rows=1 width=595) (actual time=0.011..0.012 rows=0 loops=1)
+                                      Buffers: shared hit=12
+                                      ->  Bitmap Heap Scan on jobs  (cost=4.53..73.45 rows=1 width=148) (actual time=0.011..0.011 rows=0 loops=1)
+                                            Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start < '2026-09-14 15:31:06.788157-04'::timestamp with time zone) AND (scheduled_start >= '2026-09-13 20:00:00-04'::timestamp with time zone))
+                                            Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'SCHEDULED'::job_status))
+                                            Rows Removed by Filter: 30
+                                            Heap Blocks: exact=10
+                                            Buffers: shared hit=12
+                                            ->  Bitmap Index Scan on ix_jobs_organization_id_scheduled_start  (cost=0.00..4.53 rows=19 width=0) (actual time=0.002..0.002 rows=30 loops=1)
+                                                  Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start < '2026-09-14 15:31:06.788157-04'::timestamp with time zone) AND (scheduled_start >= '2026-09-13 20:00:00-04'::timestamp with time zone))
+                                                  Buffers: shared hit=2
+                                      ->  Nested Loop Left Join  (cost=0.56..16.07 rows=1 width=447) (never executed)
+                                            ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..8.31 rows=1 width=82) (never executed)
+                                                  Index Cond: (id = jobs.employee_id)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                            ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (never executed)
+                                                  Index Cond: (id = employees_1.user_id)
+                                ->  Index Scan using pk_bookings on bookings bookings_1  (cost=0.29..8.32 rows=1 width=164) (never executed)
+                                      Index Cond: (id = jobs.booking_id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                          ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..0.64 rows=1 width=120) (never executed)
+                                Index Cond: (id = bookings_1.customer_id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                    ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (never executed)
+                          Index Cond: (id = customers_1.user_id)
+              ->  Index Scan using pk_services on services services_1  (cost=0.14..0.19 rows=1 width=141) (never executed)
+                    Index Cond: (id = bookings_1.service_id)
+                    Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+Planning:
+  Buffers: shared hit=102
+Planning Time: 0.534 ms
+Execution Time: 0.039 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT jobs.booking_id, jobs.employee_id, jobs.scheduled_start, jobs.scheduled_end, jobs.status, jobs.started_at, jobs.completed_at, jobs.internal_notes, jobs.id, jobs.organization_id, jobs.created_at, jobs.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1, customers_1.user_id, customers_1.address, customers_1.notes, customers_1.archived_at, customers_1.id AS id_2, customers_1.organization_id AS organization_id_1, customers_1.created_at AS created_at_2, customers_1.updated_at AS updated_at_2, services_1.name, services_1.description, services_1.base_price, services_1.duration_minutes, services_1.active, services_1.image_url, services_1.id AS id_3, services_1.organization_id AS organization_id_2, services_1.created_at AS created_at_3, services_1.updated_at AS updated_at_3, bookings_1.customer_id, bookings_1.service_id, bookings_1.requested_start, bookings_1.requested_end, bookings_1.status AS status_1, bookings_1.customer_notes, bookings_1.admin_notes, bookings_1.id AS id_4, bookings_1.organization_id AS organization_id_3, bookings_1.created_at AS created_at_4, bookings_1.updated_at AS updated_at_4, users_2.auth_provider_id AS auth_provider_id_1, users_2.email AS email_1, users_2.first_name AS first_name_1, users_2.last_name AS last_name_1, users_2.phone AS phone_1, users_2.avatar_url AS avatar_url_1, users_2.is_platform_admin AS is_platform_admin_1, users_2.password_hash AS password_hash_1, users_2.id AS id_5, users_2.created_at AS created_at_5, users_2.updated_at AS updated_at_5, employees_1.user_id AS user_id_1, employees_1.job_title, employees_1.active AS active_1, employees_1.id AS id_6, employees_1.organization_id AS organization_id_4, employees_1.created_at AS created_at_6, employees_1.updated_at AS updated_at_6 FROM jobs LEFT OUTER JOIN bookings AS bookings_1 ON jobs.booking_id = bookings_1.id LEFT OUTER JOIN customers AS customers_1 ON bookings_1.customer_id = customers_1.id LEFT OUTER JOIN users AS users_1 ON users_1.id = customers_1.user_id LEFT OUTER JOIN services AS services_1 ON bookings_1.service_id = services_1.id LEFT OUTER JOIN employees AS employees_1 ON jobs.employee_id = employees_1.id LEFT OUTER JOIN users AS users_2 ON users_2.id = employees_1.user_id WHERE jobs.organization_id = %(organization_id_5)s::UUID AND jobs.status = %(status_2)s AND jobs.scheduled_start >= %(scheduled_start_1)s::TIMESTAMP WITH TIME ZONE ORDER BY jobs.scheduled_start, jobs.id LIMIT %(param_1)s::INTEGER
+Limit  (cost=572.91..572.92 rows=2 width=1385) (actual time=0.743..0.744 rows=8 loops=1)
+  Buffers: shared hit=1883
+  ->  Sort  (cost=572.91..572.92 rows=2 width=1385) (actual time=0.743..0.744 rows=8 loops=1)
+        Sort Key: jobs.scheduled_start, jobs.id
+        Sort Method: top-N heapsort  Memory: 37kB
+        Buffers: shared hit=1883
+        ->  Nested Loop Left Join  (cost=7.88..572.90 rows=2 width=1385) (actual time=0.022..0.686 rows=107 loops=1)
+              Buffers: shared hit=1883
+              ->  Nested Loop Left Join  (cost=7.74..572.52 rows=2 width=1244) (actual time=0.021..0.615 rows=107 loops=1)
+                    Buffers: shared hit=1669
+                    ->  Nested Loop Left Join  (cost=7.45..566.68 rows=2 width=879) (actual time=0.018..0.515 rows=107 loops=1)
+                          Buffers: shared hit=1348
+                          ->  Nested Loop Left Join  (cost=7.17..565.41 rows=2 width=759) (actual time=0.016..0.401 rows=107 loops=1)
+                                Buffers: shared hit=1027
+                                ->  Nested Loop Left Join  (cost=6.88..548.75 rows=2 width=595) (actual time=0.013..0.240 rows=107 loops=1)
+                                      Buffers: shared hit=706
+                                      ->  Bitmap Heap Scan on jobs  (cost=6.32..516.60 rows=2 width=148) (actual time=0.009..0.087 rows=107 loops=1)
+                                            Recheck Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone))
+                                            Filter: (((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)) AND (status = 'SCHEDULED'::job_status))
+                                            Rows Removed by Filter: 157
+                                            Heap Blocks: exact=62
+                                            Buffers: shared hit=64
+                                            ->  Bitmap Index Scan on ix_jobs_organization_id_scheduled_start  (cost=0.00..6.32 rows=203 width=0) (actual time=0.006..0.006 rows=335 loops=1)
+                                                  Index Cond: ((organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid) AND (scheduled_start >= '2026-09-14 15:46:06.788157-04'::timestamp with time zone))
+                                                  Buffers: shared hit=2
+                                      ->  Nested Loop Left Join  (cost=0.56..16.07 rows=1 width=447) (actual time=0.001..0.001 rows=1 loops=107)
+                                            Buffers: shared hit=642
+                                            ->  Index Scan using pk_employees on employees employees_1  (cost=0.27..8.31 rows=1 width=82) (actual time=0.001..0.001 rows=1 loops=107)
+                                                  Index Cond: (id = jobs.employee_id)
+                                                  Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                                  Buffers: shared hit=321
+                                            ->  Index Scan using pk_users on users users_2  (cost=0.29..7.76 rows=1 width=365) (actual time=0.000..0.000 rows=1 loops=107)
+                                                  Index Cond: (id = employees_1.user_id)
+                                                  Buffers: shared hit=321
+                                ->  Index Scan using pk_bookings on bookings bookings_1  (cost=0.29..8.32 rows=1 width=164) (actual time=0.001..0.001 rows=1 loops=107)
+                                      Index Cond: (id = jobs.booking_id)
+                                      Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                      Buffers: shared hit=321
+                          ->  Index Scan using pk_customers on customers customers_1  (cost=0.29..0.64 rows=1 width=120) (actual time=0.001..0.001 rows=1 loops=107)
+                                Index Cond: (id = bookings_1.customer_id)
+                                Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                                Buffers: shared hit=321
+                    ->  Index Scan using pk_users on users users_1  (cost=0.29..2.92 rows=1 width=365) (actual time=0.001..0.001 rows=1 loops=107)
+                          Index Cond: (id = customers_1.user_id)
+                          Buffers: shared hit=321
+              ->  Index Scan using pk_services on services services_1  (cost=0.14..0.19 rows=1 width=141) (actual time=0.000..0.000 rows=1 loops=107)
+                    Index Cond: (id = bookings_1.service_id)
+                    Filter: ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text))
+                    Buffers: shared hit=214
+Planning:
+  Buffers: shared hit=102
+Planning Time: 0.632 ms
+Execution Time: 0.771 ms
+
+-- GET /dashboard  (dashboard)
+-- SELECT customers.user_id, customers.address, customers.notes, customers.archived_at, customers.id, customers.organization_id, customers.created_at, customers.updated_at, users_1.auth_provider_id, users_1.email, users_1.first_name, users_1.last_name, users_1.phone, users_1.avatar_url, users_1.is_platform_admin, users_1.password_hash, users_1.id AS id_1, users_1.created_at AS created_at_1, users_1.updated_at AS updated_at_1 FROM customers LEFT OUTER JOIN users AS users_1 ON users_1.id = customers.user_id WHERE customers.organization_id = %(organization_id_1)s::UUID AND customers.archived_at IS NULL ORDER BY customers.created_at DESC, customers.id LIMIT %(param_1)s::INTEGER
+Limit  (cost=299.03..299.05 rows=5 width=485) (actual time=0.406..0.406 rows=5 loops=1)
+  Buffers: shared hit=1208
+  ->  Sort  (cost=299.03..299.08 rows=18 width=485) (actual time=0.405..0.406 rows=5 loops=1)
+        Sort Key: customers.created_at DESC, customers.id
+        Sort Method: top-N heapsort  Memory: 27kB
+        Buffers: shared hit=1208
+        ->  Nested Loop Left Join  (cost=7.57..298.74 rows=18 width=485) (actual time=0.008..0.328 rows=400 loops=1)
+              Buffers: shared hit=1208
+              ->  Bitmap Heap Scan on customers  (cost=7.29..157.29 rows=18 width=120) (actual time=0.006..0.099 rows=400 loops=1)
+                    Recheck Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                    Filter: ((archived_at IS NULL) AND ((organization_id = (NULLIF(current_setting('app.organization_id'::text, true), ''::text))::uuid) OR (current_setting('app.rls_bypass'::text, true) = 'on'::text)))
+                    Heap Blocks: exact=6
+                    Buffers: shared hit=8
+                    ->  Bitmap Index Scan on ix_customers_organization_id_created_at  (cost=0.00..7.29 rows=400 width=0) (actual time=0.004..0.004 rows=400 loops=1)
+                          Index Cond: (organization_id = 'e500ed3f-1e45-4af9-adf4-facb1d6dd517'::uuid)
+                          Buffers: shared hit=2
+              ->  Index Scan using pk_users on users users_1  (cost=0.29..7.86 rows=1 width=365) (actual time=0.000..0.000 rows=1 loops=400)
+                    Index Cond: (id = customers.user_id)
+                    Buffers: shared hit=1200
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.056 ms
+Execution Time: 0.413 ms
