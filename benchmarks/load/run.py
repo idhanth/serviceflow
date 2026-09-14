@@ -111,12 +111,11 @@ def main() -> None:
         "SERVICEFLOW_RESULT_BACKEND": "cache+memory://",
         "JWT_SECRET": os.environ.get("JWT_SECRET", "load-test-secret-that-is-long-enough-1234"),
         "ENVIRONMENT": "local",
-        "LOG_LEVEL": "WARNING",
     }
     api = subprocess.Popen(
         ["uv", "run", "uvicorn", "serviceflow.main:app", "--port", str(args.port), "--workers", str(args.workers),
          "--log-level", "warning", "--no-access-log"],
-        cwd=REPO / "apps/api", env=env, stdout=subprocess.DEVNULL, stderr=open(raw_dir / "api.log", "w"),  # noqa: SIM115
+        cwd=REPO / "apps/api", env=env, stdout=open(raw_dir / "api.log", "w"), stderr=subprocess.STDOUT,  # noqa: SIM115
         start_new_session=True,
     )  # fmt: skip
     try:
@@ -247,6 +246,7 @@ def main() -> None:
                 "max_connections_from_api": args.workers * (args.pool_size + args.max_overflow),
             },
             "rate_limiting": "off (the limiter is tested separately)",
+            "logging": "JSON access and event logs at INFO, as in the Docker stack",
             "celery_broker": "in-memory (email dispatch is asynchronous and not part of the request path)",
         },
         "dataset": {**manifest["totals"], "database_row_counts": counts},

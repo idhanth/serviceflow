@@ -4,6 +4,7 @@
 #   ./scripts/load-test.sh reset                      # (re)build serviceflow_load: 25 tenants, 50k bookings
 #   ./scripts/load-test.sh run 100 60s                # 100 virtual users for 60s -> benchmarks/results/load_test.json
 #   WORKERS=4 POOL_SIZE=10 MAX_OVERFLOW=5 ./scripts/load-test.sh run 100 60s
+#   ./scripts/load-test.sh final 100 60s               # 3 runs -> results/final/, median -> load_test.json
 #
 # Never points at the development database. Rate limiting is off for the API it
 # starts, so the run measures the system serving traffic rather than the limiter
@@ -47,8 +48,33 @@ case "${1:-run}" in
       --pool-timeout "${POOL_TIMEOUT:-5}" --db-base "$DB_BASE" --database "$LOAD_DB" \
       --label "${LABEL:-mixed}" ${OUTPUT:+--output "$OUTPUT"}
     ;;
+  final)
+    # Identical runs on one shared machine vary, so the published result is not
+    # one run. It is the median-throughput run of RUNS (default 3) - chosen by
+    # rule before the runs, never by eye - and every run is kept and published.
+    rm -rf "$ROOT/benchmarks/results/final"
+    mkdir -p "$ROOT/benchmarks/results/final"
+    for i in $(seq 1 "${RUNS:-3}"); do
+      echo "==> final run $i of ${RUNS:-3}"
+      reset
+      uv run python "$ROOT/benchmarks/load/run.py" --vus "${2:-100}" --duration "${3:-60s}" \
+        --workers "${WORKERS:-4}" --pool-size "${POOL_SIZE:-10}" --max-overflow "${MAX_OVERFLOW:-5}" \
+        --pool-timeout "${POOL_TIMEOUT:-5}" --db-base "$DB_BASE" --database "$LOAD_DB" \
+        --label "final-$i" --output "$ROOT/benchmarks/results/final/run-$i.json"
+    done
+    uv run python - "$ROOT/benchmarks/results" <<'PY'
+import json, shutil, sys
+from pathlib import Path
+results = Path(sys.argv[1])
+runs = sorted((results / "final").glob("run-*.json"))
+ranked = sorted(runs, key=lambda p: json.loads(p.read_text())["results"]["requests_per_second"])
+median = ranked[len(ranked) // 2]
+shutil.copyfile(median, results / "load_test.json")
+print(f"==> load_test.json <- {median.name} (median throughput of {len(runs)} runs)")
+PY
+    ;;
   *)
-    echo "usage: $0 reset | run [vus] [duration]" >&2
+    echo "usage: $0 reset | run [vus] [duration] | final [vus] [duration]" >&2
     exit 2
     ;;
 esac

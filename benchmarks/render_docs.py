@@ -140,6 +140,56 @@ def load_configuration(r: dict[str, Any]) -> str:
     )
 
 
+def load_tuning(runs: list[dict[str, Any]], chosen: dict[str, Any] | None) -> str:
+    rows = [
+        "| Workers | Pool per worker | Max API connections | Throughput | p50 | p95 | p99 | Errors | Peak connections |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+
+    def key(r: dict[str, Any]) -> tuple[int, int, int]:
+        pool = r["configuration"]["pool"]
+        return (r["configuration"]["uvicorn_workers"], pool["pool_size"], pool["max_overflow"])
+
+    for r in sorted(runs, key=key):
+        res, cfg = r["results"], r["configuration"]
+        pool, lat = cfg["pool"], res["latency_ms"]
+        rows.append(
+            f"| {cfg['uvicorn_workers']} | {pool['pool_size']} + {pool['max_overflow']} | {pool['max_connections_from_api']} "
+            f"| {n(res['requests_per_second'])} req/s | {n(lat['p50'])} ms | {n(lat['p95'])} ms | {n(lat['p99'])} ms "
+            f"| {res['error_rate'] * 100:.2f}% | {r['database_connections']['peak_total']} |"
+        )
+    first = runs[0]["configuration"] if runs else None
+    if first:
+        rows += [
+            "",
+            f"Each row is one run of {first['virtual_users']} virtual users for {first['duration']} against a freshly "
+            f"rebuilt dataset, from `benchmarks/results/tuning/`.",
+        ]
+    if chosen:
+        pool = chosen["configuration"]["pool"]
+        rows[-1] += (
+            f" The headline result uses {chosen['configuration']['uvicorn_workers']} workers with a pool of "
+            f"{pool['pool_size']} + {pool['max_overflow']}, measured again in its own run."
+        )
+    return "\n".join(rows)
+
+
+def load_repeats(runs: list[tuple[str, dict[str, Any]]], chosen: dict[str, Any] | None) -> str:
+    rows = [
+        "| Run | Throughput | p50 | p95 | p99 | Errors | Requests | Peak connections | Published |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |",
+    ]
+    for name, r in runs:
+        res, lat = r["results"], r["results"]["latency_ms"]
+        published = "yes" if chosen and r["raw_summary"] == chosen["raw_summary"] else ""
+        rows.append(
+            f"| {name} | {n(res['requests_per_second'])} req/s | {n(lat['p50'])} ms | {n(lat['p95'])} ms "
+            f"| {n(lat['p99'])} ms | {res['error_rate'] * 100:.2f}% | {n(res['total_requests'])} "
+            f"| {r['database_connections']['peak_total']} | {published} |"
+        )
+    return "\n".join(rows)
+
+
 def resume_bullets(iso: dict[str, Any], load_result: dict[str, Any]) -> str:
     s = iso["summary"]
     res = load_result["results"]
@@ -171,6 +221,12 @@ def sections() -> dict[str, str]:
         rendered["load-summary"] = load_summary(load_result)
         rendered["load-endpoints"] = load_endpoints(load_result)
         rendered["load-configuration"] = load_configuration(load_result)
+    final = [(p.stem, json.loads(p.read_text())) for p in sorted((RESULTS / "final").glob("run-*.json"))]
+    if final:
+        rendered["load-repeats"] = load_repeats(final, load_result)
+    tuning = [json.loads(p.read_text()) for p in sorted((RESULTS / "tuning").glob("*.json"))]
+    if tuning:
+        rendered["load-tuning"] = load_tuning(tuning, load_result)
     if iso and load_result:
         rendered["resume-bullets"] = resume_bullets(iso, load_result)
     return rendered
