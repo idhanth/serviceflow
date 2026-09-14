@@ -33,8 +33,10 @@ out/
 playwright-report/
 test-results/
 
-# Load-test output
-load/results/
-
 # Celery beat's local schedule state (runtime artefact)
 apps/api/celerybeat-schedule.db
+
+# Benchmark runtime files (the results JSON and raw k6 summaries ARE committed)
+benchmarks/load/.dataset.json
+benchmarks/results/raw/api.log
+benchmarks/results/raw/k6.log
